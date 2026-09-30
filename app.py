@@ -25,7 +25,9 @@ def send_message(recipient_id, text):
 def home():
     """Сервер ажиллаж байгааг шалгах үндсэн хуудас"""
     return "MatchChat Server is running 24/7!CAMILAAXISMUS", 800
-    @app.route("/privacy", methods=["GET"])
+
+
+@app.route("/privacy", methods=["GET"])
 def privacy_policy():
     html_content = """
     <!DOCTYPE html>
