@@ -68,7 +68,7 @@ def create_persona(name, profile_picture_url):
         if res.status_code == 200:
             return res.json().get("id")
     except Exception as e:
-        print(f"Persona үүсгэхэд алдаа: {e}")
+        print(f"Persona алдаа: {e}")
     return None
 
 def get_persona_id(gender):
@@ -140,55 +140,24 @@ def update_user_field(psid, field, value):
 def get_statistics():
     conn = get_db_connection()
     if not conn:
-        return {
-            "total": 0, "today": 0, "chatting": 0, "waiting": 0,
-            "male": 0, "female": 0, "unknown_gender": 0,
-            "avg_age": "—", "age_16_20": 0, "age_21_25": 0,
-            "age_26_30": 0, "age_30_plus": 0, "age_unknown": 0
-        }
+        return {"total": 0, "today": 0, "chatting": 0, "waiting": 0}
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM users;")
         total = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE;")
         today = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эрэгтэй';")
-        male = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эмэгтэй';")
-        female = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM users WHERE gender NOT IN ('Эрэгтэй', 'Эмэгтэй');")
-        unknown_gender = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL;")
         chatting = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM users WHERE is_waiting = TRUE;")
         waiting = cur.fetchone()[0]
-        cur.execute("""
-            SELECT 
-                ROUND(AVG(CASE WHEN age ~ '^[0-9]+$' THEN age::numeric END), 1) as avg_age,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 16 AND 20) as age_16_20,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 21 AND 25) as age_21_25,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 26 AND 30) as age_26_30,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int > 30) as age_30_plus,
-                COUNT(*) FILTER (WHERE NOT (age ~ '^[0-9]+$')) as age_unknown
-            FROM users;
-        """)
-        age_row = cur.fetchone()
-        avg_age = age_row[0] if age_row[0] is not None else "—"
-        age_16_20, age_21_25, age_26_30, age_30_plus, age_unknown = age_row[1], age_row[2], age_row[3], age_row[4], age_row[5]
     conn.close()
-    return {
-        "total": total, "today": today, "male": male, "female": female,
-        "unknown_gender": unknown_gender, "chatting": chatting, "waiting": waiting,
-        "avg_age": avg_age, "age_16_20": age_16_20, "age_21_25": age_21_25,
-        "age_26_30": age_26_30, "age_30_plus": age_30_plus, "age_unknown": age_unknown
-    }
+    return {"total": total, "today": today, "chatting": chatting, "waiting": waiting}
 
 # --- МЕССЕЖ БОЛОН ТОВЧЛУУР ИЛГЭЭХ ---
 
 def send_message(recipient_id, text, quick_replies=None, persona_id=None):
     if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
-        print(f"[TEST] To={recipient_id} | Text={text}")
         return
-
     url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     payload = {
         "recipient": {"id": recipient_id},
@@ -200,13 +169,10 @@ def send_message(recipient_id, text, quick_replies=None, persona_id=None):
         payload["persona_id"] = persona_id
 
     try:
-        res = requests.post(url, json=payload, timeout=5)
-        if res.status_code != 200:
-            print(f"Facebook API алдаа: {res.status_code} - {res.text}")
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print(f"Facebook API илгээхэд сүлжээний алдаа: {e}")
+        print(f"API Error: {e}")
 
-# Сонголтууд (Quick Reply товчлуурууд)
 def ask_gender(psid):
     update_user_field(psid, "step", "ASK_GENDER")
     qr = [
@@ -223,7 +189,7 @@ def ask_age(psid):
         {"content_type": "text", "title": "26-30", "payload": "AGE_26_30"},
         {"content_type": "text", "title": "31+", "payload": "AGE_30_PLUS"}
     ]
-    send_message(psid, "Баярлалаа! Одоо насны ангиллаа сонгоно уу:", quick_replies=qr)
+    send_message(psid, "Одоо насны ангиллаа сонгоно уу:", quick_replies=qr)
 
 def ask_nickname(psid):
     update_user_field(psid, "step", "ASK_NICKNAME")
@@ -244,42 +210,70 @@ def show_main_menu(psid, user):
     )
     send_message(psid, text, quick_replies=qr)
 
+# Функц: Холболт эхлүүлэх
+def handle_start_matching(sender_id):
+    u = get_or_create_user(sender_id)
+    if u and u.get("partner_id"):
+        send_message(sender_id, "Та хэдийн нэг хүнтэй холбогдсон байна. Чатаас гарах бол цэснээс 'Чатаас гарах'-ыг сонгоно уу.")
+        return
+    if u and u.get("is_waiting"):
+        send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
+        return
+
+    conn = get_db_connection()
+    waiting_partner = None
+    if conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE is_waiting = TRUE AND psid != %s LIMIT 1;", (sender_id,))
+            waiting_partner = cur.fetchone()
+        conn.close()
+
+    if waiting_partner:
+        partner_id = waiting_partner["psid"]
+        update_user_field(sender_id, "partner_id", partner_id)
+        update_user_field(partner_id, "partner_id", sender_id)
+        update_user_field(partner_id, "is_waiting", False)
+
+        p_info = f"🎉 Холбогдлоо!\n👤 Ярилцагч: {waiting_partner['nickname']} ({waiting_partner['gender']}, {waiting_partner['age']})"
+        s_info = f"🎉 Холбогдлоо!\n👤 Ярилцагч: {u['nickname']} ({u['gender']}, {u['age']})"
+
+        send_message(sender_id, p_info)
+        send_message(partner_id, s_info)
+    else:
+        update_user_field(sender_id, "is_waiting", True)
+        send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц шууд холбоно.")
+
+# Функц: Чатаас гарах
+def handle_exit_chat(sender_id):
+    u = get_or_create_user(sender_id)
+    qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
+    if u and u.get("partner_id"):
+        partner_id = u["partner_id"]
+        update_user_field(sender_id, "partner_id", None)
+        update_user_field(partner_id, "partner_id", None)
+        send_message(sender_id, "❌ Та чатаас гарлаа.", quick_replies=qr)
+        send_message(partner_id, "❌ Ярилцагч тань чатаас гарлаа.", quick_replies=qr)
+    elif u and u.get("is_waiting"):
+        update_user_field(sender_id, "is_waiting", False)
+        send_message(sender_id, "Хайлтыг зогсоолоо.", quick_replies=qr)
+    else:
+        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr)
+
+# Функц: Профайл харуулах
+def handle_show_profile(sender_id):
+    u = get_or_create_user(sender_id)
+    qr = [
+        {"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"},
+        {"content_type": "text", "title": "⚙️ Дахин тохируулах", "payload": "GET_STARTED"}
+    ]
+    profile_info = f"📋 Профайл:\n• Нэр: {u['nickname']}\n• Хүйс: {u['gender']}\n• Нас: {u['age']}"
+    send_message(sender_id, profile_info, quick_replies=qr)
+
 # --- ROUTES ---
 
 @app.route("/", methods=["GET"])
 def home():
     return "MatchChat Server is running 24/7!", 200
-
-@app.route("/stats", methods=["GET"])
-def stats_page():
-    st = get_statistics()
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>MatchChat Статистик</title>
-        <meta charset="utf-8">
-        <style>
-            body {{ font-family: sans-serif; background: #0b132b; color: #fff; padding: 20px; }}
-            .container {{ max-width: 500px; margin: auto; background: #1c2541; padding: 20px; border-radius: 12px; }}
-            h2 {{ color: #48cae4; text-align: center; }}
-            .stat {{ display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #3a506b; }}
-            .val {{ color: #4ade80; font-weight: bold; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h2>📊 MatchChat Хяналтын Самбар</h2>
-            <div class="stat"><span>Нийт:</span><span class="val">{st['total']}</span></div>
-            <div class="stat"><span>Өнөөдөр:</span><span class="val">+{st['today']}</span></div>
-            <div class="stat"><span>Эрэгтэй:</span><span class="val">{st['male']}</span></div>
-            <div class="stat"><span>Эмэгтэй:</span><span class="val">{st['female']}</span></div>
-            <div class="stat"><span>Чаталж буй:</span><span class="val">{st['chatting']}</span></div>
-            <div class="stat"><span>Хүлээж буй:</span><span class="val">{st['waiting']}</span></div>
-        </div>
-    </body>
-    </html>
-    """, 200
 
 @app.route("/privacy", methods=["GET"])
 def privacy_policy():
@@ -306,14 +300,20 @@ def handle_messages():
 
                 user = get_or_create_user(sender_id)
 
-                # 1. GET STARTED ТОХИОЛДОЛ
+                # --- 1. PERSISTENT MENU БОЛОН POSTBACK ХҮЛЭЭН АВАХ ---
                 if "postback" in messaging_event:
                     payload = messaging_event.get("postback", {}).get("payload")
                     if payload == "GET_STARTED":
                         ask_gender(sender_id)
+                    elif payload == "CMD_START":
+                        handle_start_matching(sender_id)
+                    elif payload == "CMD_EXIT":
+                        handle_exit_chat(sender_id)
+                    elif payload == "CMD_PROFILE":
+                        handle_show_profile(sender_id)
                     continue
 
-                # 2. МЕССЕЖ / QUICK REPLY ТОХИОЛДОЛ
+                # --- 2. МЕССЕЖ / QUICK REPLY ХҮЛЭЭН АВАХ ---
                 message = messaging_event.get("message", {})
                 if not message:
                     continue
@@ -326,21 +326,33 @@ def handle_messages():
                 payload = message.get("quick_reply", {}).get("payload", "")
                 clean_text = text.lower()
 
-                # Админ комманд
                 if text == ADMIN_SECRET:
                     st = get_statistics()
                     msg = f"Нийт: {st['total']} | Өнөөдөр: {st['today']} | Чаталж буй: {st['chatting']} | Хүлээж буй: {st['waiting']}"
                     send_message(sender_id, msg)
                     continue
 
-                # ХҮЙС СОНГОХ ҮЕ ШАТ
+                # Түргэн товчлуурууд / Цэс
+                if payload == "CMD_START" or clean_text in ["холбогдох", "хайх", "start", "эхлэх"]:
+                    handle_start_matching(sender_id)
+                    continue
+
+                if payload == "CMD_EXIT" or clean_text in ["гарах", "stop", "exit", "гар"]:
+                    handle_exit_chat(sender_id)
+                    continue
+
+                if payload == "CMD_PROFILE" or clean_text == "/профайл":
+                    handle_show_profile(sender_id)
+                    continue
+
+                # Хүйс сонгох
                 if payload in ["GENDER_MALE", "GENDER_FEMALE"] or user.get("step") == "ASK_GENDER":
                     gender = "Эрэгтэй" if payload == "GENDER_MALE" or "эр" in clean_text else "Эмэгтэй"
                     update_user_field(sender_id, "gender", gender)
                     ask_age(sender_id)
                     continue
 
-                # НАС СОНГОХ ҮЕ ШАТ
+                # Нас сонгох
                 if payload in ["AGE_16_20", "AGE_21_25", "AGE_26_30", "AGE_30_PLUS"] or user.get("step") == "ASK_AGE":
                     age_map = {
                         "AGE_16_20": "16-20",
@@ -353,75 +365,14 @@ def handle_messages():
                     ask_nickname(sender_id)
                     continue
 
-                # НЭР ОРУУЛАХ ҮЕ ШАТ (Тэмдэгтийн хязгаарлалтгүй)
+                # Нэр оруулах
                 if user.get("step") == "ASK_NICKNAME":
                     update_user_field(sender_id, "nickname", text)
                     updated_user = get_or_create_user(sender_id)
                     show_main_menu(sender_id, updated_user)
                     continue
 
-                # ЧАТААС ГАРАХ
-                if clean_text in ["гарах", "stop", "exit", "гар"]:
-                    u = get_or_create_user(sender_id)
-                    qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
-                    if u and u.get("partner_id"):
-                        partner_id = u["partner_id"]
-                        update_user_field(sender_id, "partner_id", None)
-                        update_user_field(partner_id, "partner_id", None)
-                        send_message(sender_id, "❌ Та чатаас гарлаа.", quick_replies=qr)
-                        send_message(partner_id, "❌ Ярилцагч тань чатаас гарлаа.", quick_replies=qr)
-                    elif u and u.get("is_waiting"):
-                        update_user_field(sender_id, "is_waiting", False)
-                        send_message(sender_id, "Хайлтыг зогсоолоо.", quick_replies=qr)
-                    else:
-                        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr)
-                    continue
-
-                # ХОЛБОГДОХ / ХАЙХ
-                if payload == "CMD_START" or clean_text in ["холбогдох", "хайх", "start", "эхлэх"]:
-                    u = get_or_create_user(sender_id)
-                    if u and u.get("partner_id"):
-                        send_message(sender_id, "Та холбогдсон байна. Гарах бол 'Гарах' гэж бичнэ үү.")
-                    elif u and u.get("is_waiting"):
-                        send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
-                    else:
-                        conn = get_db_connection()
-                        waiting_partner = None
-                        if conn:
-                            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                                cur.execute("SELECT * FROM users WHERE is_waiting = TRUE AND psid != %s LIMIT 1;", (sender_id,))
-                                waiting_partner = cur.fetchone()
-                            conn.close()
-
-                        if waiting_partner:
-                            partner_id = waiting_partner["psid"]
-                            update_user_field(sender_id, "partner_id", partner_id)
-                            update_user_field(partner_id, "partner_id", sender_id)
-                            update_user_field(partner_id, "is_waiting", False)
-
-                            exit_qr = [{"content_type": "text", "title": "❌ Гарах", "payload": "CMD_EXIT"}]
-                            p_info = f"🎉 Холбогдлоо!\n👤 Ярилцагч: {waiting_partner['nickname']} ({waiting_partner['gender']}, {waiting_partner['age']})"
-                            s_info = f"🎉 Холбогдлоо!\n👤 Ярилцагч: {u['nickname']} ({u['gender']}, {u['age']})"
-
-                            send_message(sender_id, p_info, quick_replies=exit_qr)
-                            send_message(partner_id, s_info, quick_replies=exit_qr)
-                        else:
-                            update_user_field(sender_id, "is_waiting", True)
-                            send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц холбоно.")
-                    continue
-
-                # ПРОФАЙЛ ХАРАХ
-                if payload == "CMD_PROFILE" or clean_text == "/профайл":
-                    u = get_or_create_user(sender_id)
-                    qr = [
-                        {"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"},
-                        {"content_type": "text", "title": "⚙️ Дахин тохируулах", "payload": "GET_STARTED"}
-                    ]
-                    profile_info = f"📋 Профайл:\n• Нэр: {u['nickname']}\n• Хүйс: {u['gender']}\n• Нас: {u['age']}"
-                    send_message(sender_id, profile_info, quick_replies=qr)
-                    continue
-
-                # ЧАТЛАХ (PERSONA АШИГЛАН ДАМЖУУЛАХ)
+                # Чатлах (дамжуулах)
                 u = get_or_create_user(sender_id)
                 if u and u.get("partner_id"):
                     p_id = get_persona_id(u["gender"])
@@ -429,10 +380,10 @@ def handle_messages():
                     send_message(u["partner_id"], formatted_text, persona_id=p_id)
                 else:
                     qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
-                    send_message(sender_id, "Та одоогоор холбогдоогүй байна. 'Холбогдох' товчийг дарна уу.", quick_replies=qr)
+                    send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна. 'Холбогдох' товчийг дарж хайна уу.", quick_replies=qr)
 
     except Exception as err:
-        print(f"Webhook боловсруулахад алдаа: {err}")
+        print(f"Webhook алдаа: {err}")
 
     return "EVENT_RECEIVED", 200
 
