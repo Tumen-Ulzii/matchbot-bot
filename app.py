@@ -6,14 +6,12 @@ from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
-# Render Environment Variables-аас тохиргоог авна
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN", "REPLACE_WITH_PAGE_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secret_matchchat_token_123")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 ADMIN_SECRET = "/admin stat"
 
-# Аватарын зургийн бэлэн линкүүд
 AVATAR_MALE = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
 AVATAR_FEMALE = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
 AVATAR_UNKNOWN = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
@@ -32,7 +30,6 @@ def init_db():
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:
-            # Хэрэглэгчдийн хүснэгт үүсгэх
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     psid VARCHAR(100) PRIMARY KEY,
@@ -44,15 +41,12 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-            
-            # Баганын тэлэлт болон шалгалтууд
             cur.execute("ALTER TABLE users ALTER COLUMN age TYPE VARCHAR(50);")
             cur.execute("ALTER TABLE users ALTER COLUMN gender TYPE VARCHAR(50);")
             cur.execute("ALTER TABLE users ALTER COLUMN age SET DEFAULT 'Тодорхойгүй';")
             cur.execute("ALTER TABLE users ALTER COLUMN gender SET DEFAULT 'Тодорхойгүй';")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
-            # Persona ID-нуудыг хадгалах хүснэгт
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS personas (
                     gender_type VARCHAR(20) PRIMARY KEY,
@@ -67,10 +61,8 @@ init_db()
 # --- PERSONA API УДИРДЛАГА ---
 
 def create_persona(name, profile_picture_url):
-    """Facebook дээр шинэ Persona үүсгэх хүсэлт (Хамгаалалттай)"""
     if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
         return None
-    
     url = f"https://graph.facebook.com/v19.0/me/personas?access_token={PAGE_ACCESS_TOKEN}"
     payload = {
         "name": name,
@@ -88,7 +80,6 @@ def get_persona_id(gender):
     conn = get_db_connection()
     if not conn:
         return None
-    
     g_key = "unknown"
     p_name = "Нууц ярилцагч"
     p_pic = AVATAR_UNKNOWN
@@ -162,15 +153,12 @@ def get_statistics():
             "age_26_30": 0, "age_30_plus": 0, "age_unknown": 0
         }
     with conn.cursor() as cur:
-        # Нийт хэрэглэгч
         cur.execute("SELECT COUNT(*) FROM users;")
         total = cur.fetchone()[0]
 
-        # Өнөөдрийн бүртгэл
         cur.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE;")
         today = cur.fetchone()[0]
 
-        # Хүйс
         cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эрэгтэй';")
         male = cur.fetchone()[0]
 
@@ -180,14 +168,12 @@ def get_statistics():
         cur.execute("SELECT COUNT(*) FROM users WHERE gender NOT IN ('Эрэгтэй', 'Эмэгтэй');")
         unknown_gender = cur.fetchone()[0]
 
-        # Бодит цагийн идэвх
         cur.execute("SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL;")
         chatting = cur.fetchone()[0]
 
         cur.execute("SELECT COUNT(*) FROM users WHERE is_waiting = TRUE;")
         waiting = cur.fetchone()[0]
 
-        # Насны бүлгүүд болон дундаж нас
         cur.execute("""
             SELECT 
                 ROUND(AVG(CASE WHEN age ~ '^[0-9]+$' THEN age::numeric END), 1) as avg_age,
@@ -208,22 +194,13 @@ def get_statistics():
 
     conn.close()
     return {
-        "total": total,
-        "today": today,
-        "male": male,
-        "female": female,
-        "unknown_gender": unknown_gender,
-        "chatting": chatting,
-        "waiting": waiting,
-        "avg_age": avg_age,
-        "age_16_20": age_16_20,
-        "age_21_25": age_21_25,
-        "age_26_30": age_26_30,
-        "age_30_plus": age_30_plus,
-        "age_unknown": age_unknown
+        "total": total, "today": today, "male": male, "female": female,
+        "unknown_gender": unknown_gender, "chatting": chatting, "waiting": waiting,
+        "avg_age": avg_age, "age_16_20": age_16_20, "age_21_25": age_21_25,
+        "age_26_30": age_26_30, "age_30_plus": age_30_plus, "age_unknown": age_unknown
     }
 
-# --- МЕССЕЖ ИЛГЭЭХ СИСТЕМ (ХАМГААЛАЛТТАЙ) ---
+# --- МЕССЕЖ ИЛГЭЭХ СИСТЕМ ---
 
 def send_message(recipient_id, text, persona_id=None):
     if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
@@ -237,7 +214,7 @@ def send_message(recipient_id, text, persona_id=None):
     }
     if persona_id:
         payload["persona_id"] = persona_id
-        
+
     try:
         res = requests.post(url, json=payload, timeout=5)
         if res.status_code != 200:
@@ -251,7 +228,6 @@ def send_message(recipient_id, text, persona_id=None):
 def home():
     return "MatchChat PostgreSQL & Persona Server is running 24/7! CAMILAAXISMUS", 200
 
-# ДЭЛГЭРЭНГҮЙ СТАТИСТИК ХУУДАС
 @app.route("/stats", methods=["GET"])
 def stats_page():
     st = get_statistics()
@@ -276,16 +252,13 @@ def stats_page():
     <body>
         <div class="container">
             <h2>📊 MatchChat Хяналтын Самбар</h2>
-            
             <div class="section-title">Хэрэглэгчийн тоо баримт</div>
             <div class="stat-box"><span>Нийт хэрэглэгч:</span><span class="stat-val">{st['total']} хүн</span></div>
             <div class="stat-box"><span>Өнөөдөр шинээр:</span><span class="stat-val">+{st['today']} хүн</span></div>
-
             <div class="section-title">Хүйсний бүтэц</div>
             <div class="stat-box"><span>Эрэгтэй:</span><span class="stat-sub">{st['male']} хүн</span></div>
             <div class="stat-box"><span>Эмэгтэй:</span><span class="stat-sub">{st['female']} хүн</span></div>
             <div class="stat-box"><span>Тохируулаагүй:</span><span class="stat-sub">{st['unknown_gender']} хүн</span></div>
-
             <div class="section-title">Насны ангилал & Дундаж</div>
             <div class="stat-box"><span>Насны дундаж:</span><span class="stat-val">{st['avg_age']} нас</span></div>
             <div class="stat-box"><span>16 - 20 нас:</span><span class="stat-age">{st['age_16_20']} хүн</span></div>
@@ -293,7 +266,6 @@ def stats_page():
             <div class="stat-box"><span>26 - 30 нас:</span><span class="stat-age">{st['age_26_30']} хүн</span></div>
             <div class="stat-box"><span>31+ нас:</span><span class="stat-age">{st['age_30_plus']} хүн</span></div>
             <div class="stat-box"><span>Насаа оруулаагүй:</span><span class="stat-sub">{st['age_unknown']} хүн</span></div>
-
             <div class="section-title">Бодит цагийн идэвх</div>
             <div class="stat-box"><span>Одоо чаталж буй:</span><span class="stat-val">{st['chatting']} хүн ({st['chatting'] // 2} хос)</span></div>
             <div class="stat-box"><span>Хайж буй (хүлээгдэж буй):</span><span class="stat-val">{st['waiting']} хүн</span></div>
@@ -302,7 +274,6 @@ def stats_page():
     </html>
     """, 200
 
-# БҮРЭН ЭХЭЭРЭЭ ДЭЛГЭРЭНГҮЙ PRIVACY POLICY
 @app.route("/privacy", methods=["GET"])
 def privacy_policy():
     html_content = """
@@ -323,17 +294,14 @@ def privacy_policy():
     <body>
         <h1>MatchChat - Үйлчилгээний нөхцөл ба Нууцлалын бодлого</h1>
         <p><span class="badge">Сүүлд шинэчлэгдсэн: 2026 он</span></p>
-
         <h2>1. Үйлчилгээний зорилго</h2>
         <p>MatchChat нь Facebook Messenger ашиглан хэрэглэгчдийг бодит цаг хугацаанд, нэргүйгээр хооронд нь холбож чатлуулах зорилготой платформ юм.</p>
-
         <h2>2. Мэдээллийн нууцлал ба цуглуулалт</h2>
         <ul>
             <li>Бид хэрэглэгчийн Facebook профайлын нэр, зураг, хувийн мэдээллийг ярилцагч талд ХЭЗЭЭ Ч харуулахгүй ба бүрэн нууцална.</li>
             <li>Чатлаж буй хоёр талын холболтыг зөвхөн хэрэглэгчийн түр үүссэн Page-Scoped ID (PSID) ашиглан хийнэ.</li>
             <li>Үйлчилгээний аюулгүй байдал, спам болон зүй бус үйлдлээс сэргийлэх зорилгоор чатын түүхийг дотоод системд түр хугацаанд хадгалж болно.</li>
         </ul>
-
         <h2>3. Хэрэглэгчийн баримтлах дүрэм (Community Guidelines)</h2>
         <p>MatchChat-ийг ашиглахдаа дараах үйлдлүүдийг хатуу хориглоно:</p>
         <ul>
@@ -342,10 +310,8 @@ def privacy_policy():
             <li>Бусдаас мөнгө, дансны мэдээлэл, нууц үг нэхэх зэрэг залилангийн шинж чанартай үйлдэл гаргах;</li>
             <li>Зөвшөөрөлгүй зар сурталчилгаа (spam) тасралтгүй илгээх.</li>
         </ul>
-
         <h2>4. Дүрмийн хариуцлага</h2>
         <p>Дээрх дүрмийг зөрчсөн хэрэглэгчийг урьдчилан сануулахгүйгээр ботоос бүрмөсөн хасах (хязгаарлах) эрхийг администратор эдэлнэ.</p>
-
         <h2>5. Холбоо барих</h2>
         <p>Хэрэв танд ямар нэг гомдол, санал байвал бидэнтэй холбогдоно уу:</p>
         <ul>
@@ -379,12 +345,33 @@ def handle_messages():
         for entry in data.get("entry", []):
             for messaging_event in entry.get("messaging", []):
                 sender_id = messaging_event.get("sender", {}).get("id")
-                message = messaging_event.get("message", {})
-
-                if not sender_id or not message:
+                if not sender_id:
                     continue
 
                 user = get_or_create_user(sender_id)
+
+                # --- 1. GET STARTED ТОХИОЛДОЛ (POSTBACK) ---
+                if "postback" in messaging_event:
+                    payload = messaging_event.get("postback", {}).get("payload")
+                    if payload == "GET_STARTED":
+                        welcome_msg = (
+                            f"👋 MatchChat-д тавтай морил!\n\n"
+                            f"Таны нэр: {user['nickname']}\n"
+                            f"Хүйс: {user['gender']}\n"
+                            f"Нас: {user['age']}\n\n"
+                            f"💡 Мэдээллээ өөрчлөх бол:\n"
+                            f"/нэр [шинэ нэр]\n"
+                            f"/хүйс [эр эсвэл эм]\n"
+                            f"/нас [тоо]\n\n"
+                            f"🚀 Хүнтэй холбогдох бол 'Холбогдох' гэж бичээрэй!"
+                        )
+                        send_message(sender_id, welcome_msg)
+                    continue
+
+                # --- 2. МЕССЕЖ ТОХИОЛДОЛ ---
+                message = messaging_event.get("message", {})
+                if not message:
+                    continue
 
                 if "attachments" in message:
                     send_message(sender_id, "⚠️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө.")
@@ -415,7 +402,7 @@ def handle_messages():
                     send_message(sender_id, msg)
                     continue
 
-                # 1. ТОХИРГООНЫ КОМАНДУУД
+                # ТОХИРГООНЫ КОМАНДУУД
                 if clean_text.startswith("/нэр "):
                     new_name = text[5:].strip()
                     if 0 < len(new_name) <= 20:
@@ -458,7 +445,7 @@ def handle_messages():
                     send_message(sender_id, profile_info)
                     continue
 
-                # 2. ЧАТААС ГАРАХ
+                # ЧАТААС ГАРАХ
                 elif clean_text in ["гарах", "stop", "exit", "гар"]:
                     u = get_or_create_user(sender_id)
                     if u and u.get("partner_id"):
@@ -473,7 +460,7 @@ def handle_messages():
                     else:
                         send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.")
 
-                # 3. ХОЛБОГДОХ
+                # ХОЛБОГДОХ
                 elif clean_text in ["холбогдох", "хайх", "start", "эхлэх"]:
                     u = get_or_create_user(sender_id)
                     if u and u.get("partner_id"):
@@ -504,7 +491,7 @@ def handle_messages():
                             update_user_field(sender_id, "is_waiting", True)
                             send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
 
-                # 4. ЧАТЛАХ (PERSONA АШИГЛАН ДАМЖУУЛАХ)
+                # ЧАТЛАХ (PERSONA АШИГЛАН ДАМЖУУЛАХ)
                 else:
                     u = get_or_create_user(sender_id)
                     if u and u.get("partner_id"):
