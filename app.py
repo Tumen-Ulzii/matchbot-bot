@@ -6,14 +6,14 @@ from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
-# Render Environment Variables-аас тохиргоог авна
+# Render Environment Variables
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN", "REPLACE_WITH_PAGE_TOKEN")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "my_secret_matchchat_token_123")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 ADMIN_SECRET = "/admin stat"
 
-# --- ӨГӨГДЛИЙН САНГИЙН ТОХИРГОО ---
+# --- ӨГӨГДЛИЙН САН ---
 
 def get_db_connection():
     if not DATABASE_URL:
@@ -21,13 +21,18 @@ def get_db_connection():
     conn_url = DATABASE_URL
     if conn_url.startswith("postgres://"):
         conn_url = conn_url.replace("postgres://", "postgresql://", 1)
-    return psycopg2.connect(conn_url)
+    try:
+        return psycopg2.connect(conn_url)
+    except Exception as e:
+        print(f"DB Error: {e}")
+        return None
 
 def init_db():
     conn = get_db_connection()
-    if conn:
+    if not conn:
+        return
+    try:
         with conn.cursor() as cur:
-            # Хэрэглэгчдийн хүснэгт үүсгэх
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     psid VARCHAR(100) PRIMARY KEY,
@@ -40,15 +45,14 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-            
-            # Баганын тэлэлт болон шалгалтууд
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS step VARCHAR(50) DEFAULT 'NONE';")
             cur.execute("ALTER TABLE users ALTER COLUMN age TYPE VARCHAR(50);")
             cur.execute("ALTER TABLE users ALTER COLUMN gender TYPE VARCHAR(50);")
-            cur.execute("ALTER TABLE users ALTER COLUMN age SET DEFAULT 'Тодорхойгүй';")
-            cur.execute("ALTER TABLE users ALTER COLUMN gender SET DEFAULT 'Тодорхойгүй';")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             conn.commit()
+    except Exception as e:
+        print(f"Init DB Error: {e}")
+    finally:
         conn.close()
 
 init_db()
@@ -59,29 +63,38 @@ def get_or_create_user(psid):
     conn = get_db_connection()
     if not conn:
         return None
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT * FROM users WHERE psid = %s;", (psid,))
-        user = cur.fetchone()
-        if not user:
-            short_id = psid[-4:]
-            default_nick = f"Хэрэглэгч_{short_id}"
-            cur.execute(
-                "INSERT INTO users (psid, nickname, step) VALUES (%s, %s, 'NONE') RETURNING *;",
-                (psid, default_nick)
-            )
+    user = None
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE psid = %s;", (psid,))
             user = cur.fetchone()
-            conn.commit()
-    conn.close()
+            if not user:
+                short_id = str(psid)[-4:]
+                default_nick = f"Хэрэглэгч_{short_id}"
+                cur.execute(
+                    "INSERT INTO users (psid, nickname, step) VALUES (%s, %s, 'NONE') RETURNING *;",
+                    (psid, default_nick)
+                )
+                user = cur.fetchone()
+                conn.commit()
+    except Exception as e:
+        print(f"User error: {e}")
+    finally:
+        conn.close()
     return user
 
 def update_user_field(psid, field, value):
     conn = get_db_connection()
     if not conn:
         return
-    with conn.cursor() as cur:
-        cur.execute(f"UPDATE users SET {field} = %s WHERE psid = %s;", (value, psid))
-        conn.commit()
-    conn.close()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE users SET {field} = %s WHERE psid = %s;", (value, psid))
+            conn.commit()
+    except Exception as e:
+        print(f"Update error: {e}")
+    finally:
+        conn.close()
 
 def get_statistics():
     conn = get_db_connection()
@@ -92,59 +105,64 @@ def get_statistics():
             "avg_age": "—", "age_16_20": 0, "age_21_25": 0,
             "age_26_30": 0, "age_30_plus": 0, "age_unknown": 0
         }
-    with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM users;")
-        total = cur.fetchone()[0]
+    st = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users;")
+            st["total"] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE;")
-        today = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE;")
+            st["today"] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эрэгтэй';")
-        male = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эрэгтэй';")
+            st["male"] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эмэгтэй';")
-        female = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эмэгтэй';")
+            st["female"] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM users WHERE gender NOT IN ('Эрэгтэй', 'Эмэгтэй');")
-        unknown_gender = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE gender NOT IN ('Эрэгтэй', 'Эмэгтэй');")
+            st["unknown_gender"] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL;")
-        chatting = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL;")
+            st["chatting"] = cur.fetchone()[0]
 
-        cur.execute("SELECT COUNT(*) FROM users WHERE is_waiting = TRUE;")
-        waiting = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM users WHERE is_waiting = TRUE;")
+            st["waiting"] = cur.fetchone()[0]
 
-        cur.execute("""
-            SELECT 
-                ROUND(AVG(CASE WHEN age ~ '^[0-9]+$' THEN age::numeric END), 1) as avg_age,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 16 AND 20) as age_16_20,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 21 AND 25) as age_21_25,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 26 AND 30) as age_26_30,
-                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int > 30) as age_30_plus,
-                COUNT(*) FILTER (WHERE NOT (age ~ '^[0-9]+$')) as age_unknown
-            FROM users;
-        """)
-        age_row = cur.fetchone()
-        avg_age = age_row[0] if age_row[0] is not None else "—"
-        age_16_20 = age_row[1]
-        age_21_25 = age_row[2]
-        age_26_30 = age_row[3]
-        age_30_plus = age_row[4]
-        age_unknown = age_row[5]
+            cur.execute("""
+                SELECT 
+                    ROUND(AVG(CASE WHEN age ~ '^[0-9]+$' THEN age::numeric END), 1) as avg_age,
+                    COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 16 AND 20) as age_16_20,
+                    COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 21 AND 25) as age_21_25,
+                    COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 26 AND 30) as age_26_30,
+                    COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int > 30) as age_30_plus,
+                    COUNT(*) FILTER (WHERE NOT (age ~ '^[0-9]+$')) as age_unknown
+                FROM users;
+            """)
+            age_row = cur.fetchone()
+            st["avg_age"] = age_row[0] if age_row[0] is not None else "—"
+            st["age_16_20"] = age_row[1]
+            st["age_21_25"] = age_row[2]
+            st["age_26_30"] = age_row[3]
+            st["age_30_plus"] = age_row[4]
+            st["age_unknown"] = age_row[5]
+    except Exception as e:
+        print(f"Stats error: {e}")
+        return {
+            "total": 0, "today": 0, "chatting": 0, "waiting": 0,
+            "male": 0, "female": 0, "unknown_gender": 0,
+            "avg_age": "—", "age_16_20": 0, "age_21_25": 0,
+            "age_26_30": 0, "age_30_plus": 0, "age_unknown": 0
+        }
+    finally:
+        conn.close()
+    return st
 
-    conn.close()
-    return {
-        "total": total, "today": today, "male": male, "female": female,
-        "unknown_gender": unknown_gender, "chatting": chatting, "waiting": waiting,
-        "avg_age": avg_age, "age_16_20": age_16_20, "age_21_25": age_21_25,
-        "age_26_30": age_26_30, "age_30_plus": age_30_plus, "age_unknown": age_unknown
-    }
-
-# --- МЕССЕЖ ИЛГЭЭХ ҮНДСЭН СИСТЕМ ---
+# --- МЕССЕЖ ИЛГЭЭХ СИСТЕМ ---
 
 def send_message(recipient_id, text, quick_replies=None):
     if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
-        print(f"[TEST / NO TOKEN] To={recipient_id} | Text={text}")
+        print(f"[TEST] To={recipient_id} | Text={text}")
         return
 
     url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
@@ -158,11 +176,11 @@ def send_message(recipient_id, text, quick_replies=None):
     try:
         res = requests.post(url, json=payload, timeout=5)
         if res.status_code != 200:
-            print(f"Facebook API алдаа: {res.status_code} - {res.text}")
+            print(f"API Error: {res.status_code} - {res.text}")
     except Exception as e:
-        print(f"Facebook API сүлжээний алдаа: {e}")
+        print(f"Send error: {e}")
 
-# Алхамт бүртгэлийн Quick Replies
+# Алхамт бүртгэл
 def ask_gender(psid):
     update_user_field(psid, "step", "ASK_GENDER")
     qr = [
@@ -194,59 +212,51 @@ def show_main_menu(psid, user):
     user_id = str(user['psid'])[-4:]
     text = (
         f"🎉 Тохиргоо амжилттай дууслаа!\n\n"
-        f"• Хэрэглэгчийн ID: #{user_id}\n"
-        f"• Нэр: {user['nickname']}\n"
-        f"• Хүйс: {user['gender']}\n"
-        f"• Нас: {user['age']}\n\n"
+        f"• ID: #{user_id}\n"
+        f"• Нэр: {user.get('nickname')}\n"
+        f"• Хүйс: {user.get('gender')}\n"
+        f"• Нас: {user.get('age')}\n\n"
         f"Хүнтэй холбогдохын тулд доорх '🚀 Холбогдох' товчийг дарна уу."
     )
     send_message(psid, text, quick_replies=qr)
 
-# Гарахын өмнө лавлах баталгаажуулалт
-def ask_exit_confirmation(sender_id):
-    u = get_or_create_user(sender_id)
-    if not u.get("partner_id") and not u.get("is_waiting"):
-        qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
-        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr)
-        return
-
-    update_user_field(sender_id, "step", "CONFIRM_EXIT")
-    qr = [
-        {"content_type": "text", "title": "✅ Тийм, гарах", "payload": "EXIT_CONFIRMED_YES"},
-        {"content_type": "text", "title": "❌ Үгүй, үргэлжлүүлэх", "payload": "EXIT_CONFIRMED_NO"}
-    ]
-    send_message(sender_id, "⚠️ Та одоогийн яриаг дуусгаж чатнаас гарахдаа итгэлтэй байна уу?", quick_replies=qr)
-
 # Холболт эхлүүлэх
 def handle_start_matching(sender_id):
     u = get_or_create_user(sender_id)
-    if u and u.get("partner_id"):
+    if not u:
+        return
+
+    if u.get("partner_id"):
         send_message(sender_id, "Та хэдийн нэг хүнтэй холбогдсон байна. Чатаас гарах бол 'Гарах' гэж бичнэ үү.")
         return
-    if u and u.get("is_waiting"):
+    if u.get("is_waiting"):
         send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
         return
 
     conn = get_db_connection()
     waiting_partner = None
     if conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE is_waiting = TRUE AND psid != %s LIMIT 1 FOR UPDATE;", (sender_id,))
-            waiting_partner = cur.fetchone()
-            if waiting_partner:
-                partner_id = waiting_partner["psid"]
-                cur.execute("UPDATE users SET partner_id = %s, is_waiting = FALSE, step = 'COMPLETED' WHERE psid = %s;", (partner_id, sender_id))
-                cur.execute("UPDATE users SET partner_id = %s, is_waiting = FALSE, step = 'COMPLETED' WHERE psid = %s;", (sender_id, partner_id))
-                conn.commit()
-            else:
-                cur.execute("UPDATE users SET is_waiting = TRUE, partner_id = NULL WHERE psid = %s;", (sender_id,))
-                conn.commit()
-        conn.close()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM users WHERE is_waiting = TRUE AND psid != %s LIMIT 1;", (sender_id,))
+                waiting_partner = cur.fetchone()
+                if waiting_partner:
+                    partner_id = waiting_partner["psid"]
+                    cur.execute("UPDATE users SET partner_id = %s, is_waiting = FALSE, step = 'COMPLETED' WHERE psid = %s;", (partner_id, sender_id))
+                    cur.execute("UPDATE users SET partner_id = %s, is_waiting = FALSE, step = 'COMPLETED' WHERE psid = %s;", (sender_id, partner_id))
+                    conn.commit()
+                else:
+                    cur.execute("UPDATE users SET is_waiting = TRUE, partner_id = NULL, step = 'COMPLETED' WHERE psid = %s;", (sender_id,))
+                    conn.commit()
+        except Exception as e:
+            print(f"Matching error: {e}")
+        finally:
+            conn.close()
 
     if waiting_partner:
         partner_id = waiting_partner["psid"]
-        u_id = str(u['psid'])[-4:]
-        w_id = str(waiting_partner['psid'])[-4:]
+        u_id = str(sender_id)[-4:]
+        w_id = str(partner_id)[-4:]
 
         p_info = (
             f"🎉 Холбогдлоо!\n"
@@ -272,7 +282,7 @@ def handle_start_matching(sender_id):
     else:
         send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц шууд холбоно.")
 
-# Чатаас бодитоор гарах
+# Чатаас шууд гарах
 def handle_exit_chat(sender_id):
     u = get_or_create_user(sender_id)
     update_user_field(sender_id, "step", "COMPLETED")
@@ -282,7 +292,6 @@ def handle_exit_chat(sender_id):
         partner_id = u["partner_id"]
         update_user_field(sender_id, "partner_id", None)
         update_user_field(partner_id, "partner_id", None)
-        update_user_field(partner_id, "step", "COMPLETED")
         send_message(sender_id, "❌ Та чатнаас гарлаа.", quick_replies=qr)
         send_message(partner_id, "❌ Ярилцагч тань чатнаас гарлаа.", quick_replies=qr)
     elif u and u.get("is_waiting"):
@@ -294,6 +303,8 @@ def handle_exit_chat(sender_id):
 # Профайл харуулах
 def handle_show_profile(sender_id):
     u = get_or_create_user(sender_id)
+    if not u:
+        return
     user_id = str(u['psid'])[-4:]
     qr = [
         {"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"},
@@ -313,48 +324,6 @@ def handle_show_profile(sender_id):
 @app.route("/", methods=["GET"])
 def home():
     return "MatchChat Server is running 24/7! CAMILAAXISMUS", 200
-
-# ЦЭС БОЛОН GET STARTED-ИЙГ БАТАЛГААТАЙ СУУЛГАХ ТУСГАЙ ХУУДАС
-@app.route("/setup-menu", methods=["GET"])
-def manual_setup_menu():
-    if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
-        return "PAGE_ACCESS_TOKEN тохируулаагүй байна!", 400
-
-    url = f"https://graph.facebook.com/v19.0/me/messenger_profile?access_token={PAGE_ACCESS_TOKEN}"
-    payload = {
-        "get_started": {"payload": "GET_STARTED"},
-        "greeting": [
-            {
-                "locale": "default",
-                "text": "MatchChat-д тавтай морилно уу! Танихгүй хүнтэй холбогдон нэргүйгээр чатлаарай."
-            }
-        ],
-        "persistent_menu": [
-            {
-                "locale": "default",
-                "composer_input_disabled": False,
-                "call_to_actions": [
-                    {
-                        "type": "postback",
-                        "title": "🚀 Холбогдох",
-                        "payload": "CMD_START"
-                    },
-                    {
-                        "type": "postback",
-                        "title": "❌ Чатаас гарах",
-                        "payload": "CMD_CONFIRM_EXIT"
-                    },
-                    {
-                        "type": "postback",
-                        "title": "📋 Профайл",
-                        "payload": "CMD_PROFILE"
-                    }
-                ]
-            }
-        ]
-    }
-    res = requests.post(url, json=payload, timeout=8)
-    return f"<h3>Facebook хариу:</h3><pre>{res.text}</pre><p>Хэрэв result: success гарсан бол тохиргоо амжилттай боллоо. Утаснаасаа чатаа устгаж (Delete chat) дахин нээнэ үү.</p>", 200
 
 # ДЭЛГЭРЭНГҮЙ СТАТИСТИК ХУУДАС
 @app.route("/stats", methods=["GET"])
@@ -488,8 +457,10 @@ def handle_messages():
                     continue
 
                 user = get_or_create_user(sender_id)
+                if not user:
+                    continue
 
-                # --- 1. PERSISTENT MENU БОЛОН POSTBACK ХҮЛЭЭН АВАХ ---
+                # 1. Цэс ба Postback
                 if "postback" in messaging_event:
                     payload = messaging_event.get("postback", {}).get("payload")
                     if payload in ["GET_STARTED", "RESET_PROFILE"]:
@@ -499,27 +470,26 @@ def handle_messages():
                             ask_gender(sender_id)
                         else:
                             handle_start_matching(sender_id)
-                    elif payload in ["CMD_CONFIRM_EXIT", "CMD_EXIT"]:
-                        ask_exit_confirmation(sender_id)
+                    elif payload in ["CMD_EXIT", "CMD_CONFIRM_EXIT"]:
+                        handle_exit_chat(sender_id)
                     elif payload == "CMD_PROFILE":
                         handle_show_profile(sender_id)
                     continue
 
-                # --- 2. МЕССЕЖ / QUICK REPLY ХҮЛЭЭН АВАХ ---
+                # 2. Мессеж
                 message = messaging_event.get("message", {})
                 if not message:
                     continue
 
-                # Зураг, файл, стикер хориглох
                 if "attachments" in message or "sticker_id" in message:
-                    send_message(sender_id, "⚠️️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө. Зураг, стикер дамжуулахгүй.")
+                    send_message(sender_id, "⚠️ Зөвхөн текст илгээнэ үү. Зураг, стикер дамжуулахгүй.")
                     continue
 
                 text = message.get("text", "").strip()
                 payload = message.get("quick_reply", {}).get("payload", "")
                 clean_text = text.lower()
 
-                # Админ статистик комманд
+                # Админ комманд
                 if text == ADMIN_SECRET:
                     st = get_statistics()
                     msg = (
@@ -538,33 +508,14 @@ def handle_messages():
                     send_message(sender_id, msg)
                     continue
 
-                # Гарах баталгаажуулалтын хариу шалгах
-                if payload == "EXIT_CONFIRMED_YES":
-                    handle_exit_chat(sender_id)
-                    continue
-                elif payload == "EXIT_CONFIRMED_NO":
-                    update_user_field(sender_id, "step", "COMPLETED")
-                    send_message(sender_id, "Та яриагаа үргэлжлүүлж болно.")
-                    continue
-
-                # Гарахыг оролдох үед (текстээр эсвэл товчоор) шууд лавлах
-                if payload in ["CMD_EXIT", "CMD_CONFIRM_EXIT"] or clean_text in ["гарах", "stop", "exit", "гар", "/гарах"]:
-                    ask_exit_confirmation(sender_id)
-                    continue
-
-                # Хэрэв баталгаажуулах төлөвт байхдаа товч даралгүй өөр зүйл бичвэл дахин лавлах
-                if user.get("step") == "CONFIRM_EXIT":
-                    ask_exit_confirmation(sender_id)
-                    continue
-
-                # Хүйс сонгох үе шат
+                # Хүйс сонгох
                 if payload in ["GENDER_MALE", "GENDER_FEMALE"] or user.get("step") == "ASK_GENDER":
                     gender = "Эрэгтэй" if payload == "GENDER_MALE" or "эр" in clean_text else "Эмэгтэй"
                     update_user_field(sender_id, "gender", gender)
                     ask_age(sender_id)
                     continue
 
-                # Нас сонгох үе шат
+                # Нас сонгох
                 if payload in ["AGE_16_20", "AGE_21_25", "AGE_26_30", "AGE_30_PLUS"] or user.get("step") == "ASK_AGE":
                     age_map = {
                         "AGE_16_20": "16-20",
@@ -577,21 +528,25 @@ def handle_messages():
                     ask_nickname(sender_id)
                     continue
 
-                # Нэр оруулах үе шат
+                # Нэр оруулах
                 if user.get("step") == "ASK_NICKNAME":
                     update_user_field(sender_id, "nickname", text)
-                    updated_user = get_or_create_user(sender_id)
-                    show_main_menu(sender_id, updated_user)
+                    u = get_or_create_user(sender_id)
+                    show_main_menu(sender_id, u)
                     continue
 
-                # ХЭРЭВ БҮРТГЭЛ ДУУСААГҮЙ БАЙЖ ДУРЫН ЗҮЙЛ БИЧВЭЛ ШУУД ЭХНЭЭС НЬ ЭХЛҮҮЛЭХ
+                # Бүртгэл дуусаагүй үед эхлүүлэх
                 if user.get("step") != "COMPLETED":
                     ask_gender(sender_id)
                     continue
 
-                # Түргэн коммандууд
+                # Коммандууд
                 if payload == "CMD_START" or clean_text in ["холбогдох", "хайх", "start", "эхлэх"]:
                     handle_start_matching(sender_id)
+                    continue
+
+                if payload in ["CMD_EXIT", "CMD_CONFIRM_EXIT"] or clean_text in ["гарах", "stop", "exit", "гар"]:
+                    handle_exit_chat(sender_id)
                     continue
 
                 if payload == "CMD_PROFILE" or clean_text == "/профайл":
@@ -602,19 +557,19 @@ def handle_messages():
                     ask_gender(sender_id)
                     continue
 
-                # ЧАТЛАХ (ID, НЭР, НАС, ХҮЙСИЙГ МЕССЕЖИЙН ТОЛГОЙД ЦЭВЭРХЭН ДАМЖУУЛАХ)
-                u = get_or_create_user(sender_id)
-                if u and u.get("partner_id"):
-                    user_id = str(u['psid'])[-4:]
-                    gender_icon = "👨" if u.get("gender") == "Эрэгтэй" else ("👩" if u.get("gender") == "Эмэгтэй" else "👤")
-                    formatted_text = f"[{gender_icon} #{user_id} | {u['nickname']} | {u['age']} | {u['gender']}]:\n{text}"
-                    send_message(u["partner_id"], formatted_text)
+                # Холбогдсон үед мессеж шууд дамжуулах
+                if user.get("partner_id"):
+                    user_id = str(user['psid'])[-4:]
+                    formatted_text = f"[#{user_id} | {user['nickname']} | {user['age']} | {user['gender']}]:\n{text}"
+                    send_message(user["partner_id"], formatted_text)
+                elif user.get("is_waiting"):
+                    send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
                 else:
                     qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
                     send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна. '🚀 Холбогдох' товчийг дарж хайна уу.", quick_replies=qr)
 
     except Exception as err:
-        print(f"Webhook боловсруулахад алдаа: {err}")
+        print(f"Webhook error: {err}")
 
     return "EVENT_RECEIVED", 200
 
