@@ -13,11 +13,11 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 ADMIN_SECRET = "/admin stat"
 
-# Найдвартай ажилладаг CDN аватаруудын холбоос
-AVATAR_BOT = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80"
-AVATAR_MALE = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80"
-AVATAR_FEMALE = "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80"
-AVATAR_UNKNOWN = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"
+# Аватарын зургийн бэлэн найдвартай линкүүд
+AVATAR_BOT = "https://cdn-icons-png.flaticon.com/512/4712/4712038.png"
+AVATAR_MALE = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
+AVATAR_FEMALE = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
+AVATAR_UNKNOWN = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
 
 # --- ӨГӨГДЛИЙН САНГИЙН ТОХИРГОО ---
 
@@ -54,101 +54,10 @@ def init_db():
             cur.execute("ALTER TABLE users ALTER COLUMN age SET DEFAULT 'Тодорхойгүй';")
             cur.execute("ALTER TABLE users ALTER COLUMN gender SET DEFAULT 'Тодорхойгүй';")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-
-            # Persona ID-нуудыг хадгалах хүснэгт
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS personas (
-                    persona_key VARCHAR(150) PRIMARY KEY,
-                    persona_id VARCHAR(100)
-                );
-            """)
             conn.commit()
         conn.close()
 
 init_db()
-
-# --- PERSONA API УДИРДЛАГА (АВАТАР + ДЭЭР ХАРАГДАХ НЭР) ---
-
-def create_persona(name, profile_picture_url):
-    if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
-        return None
-    
-    url = f"https://graph.facebook.com/v19.0/me/personas?access_token={PAGE_ACCESS_TOKEN}"
-    payload = {
-        "name": name,
-        "profile_picture_url": profile_picture_url
-    }
-    try:
-        res = requests.post(url, json=payload, timeout=8)
-        if res.status_code == 200:
-            return res.json().get("id")
-        else:
-            print("Persona API error:", res.text)
-    except Exception as e:
-        print(f"Persona error: {e}")
-    return None
-
-def get_or_create_persona(persona_key, display_name, avatar_url):
-    """Тухайн нэр болон зурагтай Persona-г олох эсвэл шинээр үүсгэж авах"""
-    conn = get_db_connection()
-    if not conn:
-        return None
-
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("SELECT persona_id FROM personas WHERE persona_key = %s;", (persona_key,))
-        row = cur.fetchone()
-        if row and row["persona_id"]:
-            conn.close()
-            return row["persona_id"]
-
-        new_id = create_persona(display_name, avatar_url)
-        if new_id:
-            cur.execute(
-                "INSERT INTO personas (persona_key, persona_id) VALUES (%s, %s) ON CONFLICT (persona_key) DO UPDATE SET persona_id = %s;",
-                (persona_key, new_id, new_id)
-            )
-            conn.commit()
-            conn.close()
-            return new_id
-
-    conn.close()
-    return None
-
-def get_bot_persona_id():
-    """Ботын систем хариулагчийн дүрс болон мэргэжлийн нэршил"""
-    return get_or_create_persona(
-        persona_key="sys_bot",
-        display_name="MatchBot | Систем",
-        avatar_url=AVATAR_BOT
-    )
-
-def get_user_persona_id(user):
-    """Ярилцагчийн хүйс, нэр, нас, ID бүхий хувийн Persona"""
-    if not user:
-        return None
-
-    gender = user.get("gender", "Тодорхойгүй")
-    short_id = str(user.get("psid", ""))[-4:]
-    nickname = user.get("nickname", f"Хэрэглэгч_{short_id}")
-    age = user.get("age", "—")
-
-    # Хүйсээс хамаарч зураг сонгох
-    if gender == "Эрэгтэй":
-        avatar_url = AVATAR_MALE
-    elif gender == "Эмэгтэй":
-        avatar_url = AVATAR_FEMALE
-    else:
-        avatar_url = AVATAR_UNKNOWN
-
-    # Дээр нь харагдах нэршил (Жишээ: [#1234 | Болд | 22 | Эр])
-    gender_short = "Эр" if gender == "Эрэгтэй" else ("Эм" if gender == "Эмэгтэй" else "—")
-    display_name = f"#{short_id} {nickname} ({age}, {gender_short})"
-    
-    # 50 тэмдэгтээс хэтэрвэл Meta алдаа өгдөг тул хязгаарлах
-    display_name = display_name[:50]
-    persona_key = f"user_{user.get('psid')}_{gender}_{age}_{nickname}"
-
-    return get_or_create_persona(persona_key, display_name, avatar_url)
 
 # --- ХЭРЭГЛЭГЧИЙН УДИРДЛАГА БОЛОН СТАТИСТИК ---
 
@@ -237,11 +146,11 @@ def get_statistics():
         "age_26_30": age_26_30, "age_30_plus": age_30_plus, "age_unknown": age_unknown
     }
 
-# --- МЕССЕЖ БОЛОН ТОВЧЛУУР ИЛГЭЭХ СИСТЕМ ---
+# --- МЕССЕЖ БОЛОН ЗУРАГ ИЛГЭЭХ ҮНДСЭН ФУНКЦҮҮД ---
 
-def send_message(recipient_id, text, quick_replies=None, persona_id=None):
+def send_message(recipient_id, text, quick_replies=None):
     if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
-        print(f"[TEST / NO TOKEN] To={recipient_id} | Text={text} | Persona={persona_id}")
+        print(f"[TEST / NO TOKEN] To={recipient_id} | Text={text}")
         return
 
     url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
@@ -251,15 +160,31 @@ def send_message(recipient_id, text, quick_replies=None, persona_id=None):
     }
     if quick_replies:
         payload["message"]["quick_replies"] = quick_replies
-    if persona_id:
-        payload["persona_id"] = persona_id
         
     try:
         res = requests.post(url, json=payload, timeout=8)
         if res.status_code != 200:
             print(f"Facebook API алдаа: {res.status_code} - {res.text}")
     except Exception as e:
-        print(f"Facebook API сүлжээний алдаа: {e}")
+        print(f"Facebook API илгээхэд сүлжээний алдаа: {e}")
+
+def send_image(recipient_id, image_url):
+    if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
+        return
+    url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {
+            "attachment": {
+                "type": "image",
+                "payload": {"url": image_url, "is_reusable": True}
+            }
+        }
+    }
+    try:
+        requests.post(url, json=payload, timeout=8)
+    except Exception as e:
+        print(f"Зураг илгээхэд алдаа гарлаа: {e}")
 
 # Алхамт бүртгэлийн Quick Replies
 def ask_gender(psid):
@@ -268,7 +193,8 @@ def ask_gender(psid):
         {"content_type": "text", "title": "👨 Эрэгтэй", "payload": "GENDER_MALE"},
         {"content_type": "text", "title": "👩 Эмэгтэй", "payload": "GENDER_FEMALE"}
     ]
-    send_message(psid, "👋 MatchChat-д тавтай морил!\n\nЭхлээд өөрийн хүйсээ сонгоно уу:", quick_replies=qr, persona_id=get_bot_persona_id())
+    send_image(psid, AVATAR_BOT)
+    send_message(psid, "👋 [MatchBot • Систем]\n\nMatchChat-д тавтай морил!\nЭхлээд өөрийн хүйсээ сонгоно уу:", quick_replies=qr)
 
 def ask_age(psid):
     update_user_field(psid, "step", "ASK_AGE")
@@ -278,11 +204,11 @@ def ask_age(psid):
         {"content_type": "text", "title": "26-30", "payload": "AGE_26_30"},
         {"content_type": "text", "title": "31+", "payload": "AGE_30_PLUS"}
     ]
-    send_message(psid, "Баярлалаа! Одоо насны ангиллаа сонгоно уу:", quick_replies=qr, persona_id=get_bot_persona_id())
+    send_message(psid, "Баярлалаа! Одоо насны ангиллаа сонгоно уу:", quick_replies=qr)
 
 def ask_nickname(psid):
     update_user_field(psid, "step", "ASK_NICKNAME")
-    send_message(psid, "Одоо чатад ашиглах нэрээ (хоч нэр) чөлөөтэй бичиж илгээнэ үү:", persona_id=get_bot_persona_id())
+    send_message(psid, "Одоо чатад ашиглах нэрээ (хоч нэр) чөлөөтэй бичиж илгээнэ үү:")
 
 def show_main_menu(psid, user):
     update_user_field(psid, "step", "COMPLETED")
@@ -299,15 +225,14 @@ def show_main_menu(psid, user):
         f"• Нас: {user['age']}\n\n"
         f"Хүнтэй холбогдохын тулд доорх '🚀 Холбогдох' товчийг дарна уу."
     )
-    send_message(psid, text, quick_replies=qr, persona_id=get_bot_persona_id())
+    send_message(psid, text, quick_replies=qr)
 
 # Гарахын өмнө лавлах баталгаажуулалт
 def ask_exit_confirmation(sender_id):
     u = get_or_create_user(sender_id)
-
     if not u.get("partner_id") and not u.get("is_waiting"):
         qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
-        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr, persona_id=get_bot_persona_id())
+        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr)
         return
 
     update_user_field(sender_id, "step", "CONFIRM_EXIT")
@@ -315,57 +240,72 @@ def ask_exit_confirmation(sender_id):
         {"content_type": "text", "title": "✅ Тийм, гарах", "payload": "EXIT_CONFIRMED_YES"},
         {"content_type": "text", "title": "❌ Үгүй, үргэлжлүүлэх", "payload": "EXIT_CONFIRMED_NO"}
     ]
-    send_message(sender_id, "⚠️ Та одоогийн яриаг дуусгаж чатнаас гарахдаа итгэлтэй байна уу?", quick_replies=qr, persona_id=get_bot_persona_id())
+    send_message(sender_id, "⚠️ Та одоогийн чатыг дуусгаж гарахдаа итгэлтэй байна уу?", quick_replies=qr)
 
 # Холболт эхлүүлэх
 def handle_start_matching(sender_id):
     u = get_or_create_user(sender_id)
-
     if u and u.get("partner_id"):
-        send_message(sender_id, "Та аль хэдийн нэг хүнтэй холбогдсон байна. Чатаас гарах бол 'Гарах' гэж бичнэ үү.", persona_id=get_bot_persona_id())
+        send_message(sender_id, "Та хэдийн нэг хүнтэй холбогдсон байна. Чатаас гарах бол 'Гарах' гэж бичнэ үү.")
         return
     if u and u.get("is_waiting"):
-        send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.", persona_id=get_bot_persona_id())
+        send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
         return
 
     conn = get_db_connection()
     waiting_partner = None
     if conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE is_waiting = TRUE AND psid != %s LIMIT 1;", (sender_id,))
+            cur.execute("SELECT * FROM users WHERE is_waiting = TRUE AND psid != %s LIMIT 1 FOR UPDATE;", (sender_id,))
             waiting_partner = cur.fetchone()
+            if waiting_partner:
+                partner_id = waiting_partner["psid"]
+                cur.execute("UPDATE users SET partner_id = %s, is_waiting = FALSE, step = 'COMPLETED' WHERE psid = %s;", (partner_id, sender_id))
+                cur.execute("UPDATE users SET partner_id = %s, is_waiting = FALSE, step = 'COMPLETED' WHERE psid = %s;", (sender_id, partner_id))
+                conn.commit()
+            else:
+                cur.execute("UPDATE users SET is_waiting = TRUE, partner_id = NULL WHERE psid = %s;", (sender_id,))
+                conn.commit()
         conn.close()
 
     if waiting_partner:
         partner_id = waiting_partner["psid"]
-        update_user_field(sender_id, "partner_id", partner_id)
-        update_user_field(partner_id, "partner_id", sender_id)
-        update_user_field(partner_id, "is_waiting", False)
-        update_user_field(sender_id, "step", "COMPLETED")
-        update_user_field(partner_id, "step", "COMPLETED")
-
         u_id = str(u['psid'])[-4:]
         w_id = str(waiting_partner['psid'])[-4:]
 
         p_info = (
-            f"🎉 Шинэ ярилцагчтай холбогдлоо!\n"
-            f"👤 Дэлгэрэнгүй: #{w_id} ({waiting_partner['nickname']}, {waiting_partner['gender']}, {waiting_partner['age']})\n\n"
+            f"🎉 Холбогдлоо!\n"
+            f"👤 Ярилцагчийн мэдээлэл:\n"
+            f"• ID: #{w_id}\n"
+            f"• Нэр: {waiting_partner['nickname']}\n"
+            f"• Хүйс: {waiting_partner['gender']}\n"
+            f"• Нас: {waiting_partner['age']}\n\n"
             f"(Чатаас гарах бол цэснээс эсвэл 'Гарах' гэж бичнэ үү)"
         )
         s_info = (
-            f"🎉 Шинэ ярилцагчтай холбогдлоо!\n"
-            f"👤 Дэлгэрэнгүй: #{u_id} ({u['nickname']}, {u['gender']}, {u['age']})\n\n"
+            f"🎉 Холбогдлоо!\n"
+            f"👤 Ярилцагчийн мэдээлэл:\n"
+            f"• ID: #{u_id}\n"
+            f"• Нэр: {u['nickname']}\n"
+            f"• Хүйс: {u['gender']}\n"
+            f"• Нас: {u['age']}\n\n"
             f"(Чатаас гарах бол цэснээс эсвэл 'Гарах' гэж бичнэ үү)"
         )
 
-        # Мэдэгдлийг систем өөрийн дүрсээр илгээнэ
-        send_message(sender_id, p_info, persona_id=get_bot_persona_id())
-        send_message(partner_id, s_info, persona_id=get_bot_persona_id())
-    else:
-        update_user_field(sender_id, "is_waiting", True)
-        send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц шууд холбоно.", persona_id=get_bot_persona_id())
+        p_avatar = AVATAR_FEMALE if waiting_partner.get('gender') == 'Эмэгтэй' else (AVATAR_MALE if waiting_partner.get('gender') == 'Эрэгтэй' else AVATAR_UNKNOWN)
+        s_avatar = AVATAR_FEMALE if u.get('gender') == 'Эмэгтэй' else (AVATAR_MALE if u.get('gender') == 'Эрэгтэй' else AVATAR_UNKNOWN)
 
-# Чатаас бодитоор гаргах
+        # Sender рүү нөгөө хүний зураг, мэдээллийг явуулах
+        send_image(sender_id, p_avatar)
+        send_message(sender_id, p_info)
+
+        # Partner рүү энэ хүний зураг, мэдээллийг явуулах
+        send_image(partner_id, s_avatar)
+        send_message(partner_id, s_info)
+    else:
+        send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц шууд холбоно.")
+
+# Чатаас бодитоор гарах
 def handle_exit_chat(sender_id):
     u = get_or_create_user(sender_id)
     update_user_field(sender_id, "step", "COMPLETED")
@@ -376,13 +316,13 @@ def handle_exit_chat(sender_id):
         update_user_field(sender_id, "partner_id", None)
         update_user_field(partner_id, "partner_id", None)
         update_user_field(partner_id, "step", "COMPLETED")
-        send_message(sender_id, "❌ Та чатнаас гарлаа.", quick_replies=qr, persona_id=get_bot_persona_id())
-        send_message(partner_id, "❌ Ярилцагч тань чатнаас гарлаа.", quick_replies=qr, persona_id=get_bot_persona_id())
+        send_message(sender_id, "❌ Та чатнаас гарлаа.", quick_replies=qr)
+        send_message(partner_id, "❌ Ярилцагч тань чатнаас гарлаа.", quick_replies=qr)
     elif u and u.get("is_waiting"):
         update_user_field(sender_id, "is_waiting", False)
-        send_message(sender_id, "Хайлтыг зогсоолоо.", quick_replies=qr, persona_id=get_bot_persona_id())
+        send_message(sender_id, "Хайлтыг зогсоолоо.", quick_replies=qr)
     else:
-        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr, persona_id=get_bot_persona_id())
+        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr)
 
 # Профайл харуулах
 def handle_show_profile(sender_id):
@@ -399,13 +339,13 @@ def handle_show_profile(sender_id):
         f"• Хүйс: {u['gender']}\n"
         f"• Нас: {u['age']}"
     )
-    send_message(sender_id, profile_info, quick_replies=qr, persona_id=get_bot_persona_id())
+    send_message(sender_id, profile_info, quick_replies=qr)
 
 # --- ROUTES ---
 
 @app.route("/", methods=["GET"])
 def home():
-    return "MatchChat PostgreSQL & Persona Server is running 24/7! CAMILAAXISMUS", 200
+    return "MatchChat PostgreSQL & Webhook Server is running 24/7! CAMILAAXISMUS", 200
 
 # ЦЭС БОЛОН GET STARTED-ИЙГ БАТАЛГААТАЙ СУУЛГАХ ТУСГАЙ ХУУДАС
 @app.route("/setup-menu", methods=["GET"])
@@ -605,7 +545,7 @@ def handle_messages():
 
                 # Зураг, файл, стикер хориглох
                 if "attachments" in message or "sticker_id" in message:
-                    send_message(sender_id, "⚠️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээнэ үү. Зураг, стикер дамжуулахгүй.", persona_id=get_bot_persona_id())
+                    send_message(sender_id, "⚠️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө. Зураг, стикер дамжуулахгүй.")
                     continue
 
                 text = message.get("text", "").strip()
@@ -628,7 +568,7 @@ def handle_messages():
                         f"💬 Чаталж буй: {st['chatting']} ({st['chatting']//2} хос)\n"
                         f"⏳ Хүлээж буй: {st['waiting']}"
                     )
-                    send_message(sender_id, msg, persona_id=get_bot_persona_id())
+                    send_message(sender_id, msg)
                     continue
 
                 # Гарах баталгаажуулалтын хариу шалгах
@@ -637,7 +577,7 @@ def handle_messages():
                     continue
                 elif payload == "EXIT_CONFIRMED_NO":
                     update_user_field(sender_id, "step", "COMPLETED")
-                    send_message(sender_id, "Та яриагаа үргэлжлүүлж болно.", persona_id=get_bot_persona_id())
+                    send_message(sender_id, "Та яриагаа үргэлжлүүлж болно.")
                     continue
 
                 # Гарахыг оролдох үед (текстээр эсвэл товчоор) шууд лавлах
@@ -695,17 +635,16 @@ def handle_messages():
                     ask_gender(sender_id)
                     continue
 
-                # ЧАТЛАХ (АВАТАР ЗУРАГ БОЛОН ТОЛГОЙ МЭДЭЭЛЭЛТЭЙ ПЕРСОНАГААР ДАМЖУУЛАХ)
+                # ЧАТЛАХ (ID, НЭР, НАС, ХҮЙСИЙГ ТОД ГАРЧИГТАЙГААР ДАМЖУУЛАХ)
                 u = get_or_create_user(sender_id)
                 if u and u.get("partner_id"):
-                    # Илгээж буй хүний хүйс, нэр, нас бүхий Persona үүсгэж харуулах
-                    sender_persona = get_user_persona_id(u)
                     user_id = str(u['psid'])[-4:]
-                    formatted_text = f"[#{user_id} | {u['nickname']} | {u['age']} | {u['gender']}]:\n{text}"
-                    send_message(u["partner_id"], formatted_text, persona_id=sender_persona)
+                    gender_icon = "👨" if u.get("gender") == "Эрэгтэй" else ("👩" if u.get("gender") == "Эмэгтэй" else "👤")
+                    formatted_text = f"[{gender_icon} #{user_id} • {u['nickname']} • {u['age']} • {u['gender']}]:\n{text}"
+                    send_message(u["partner_id"], formatted_text)
                 else:
                     qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
-                    send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна. '🚀 Холбогдох' товчийг дарж хайна уу.", quick_replies=qr, persona_id=get_bot_persona_id())
+                    send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна. '🚀 Холбогдох' товчийг дарж хайна уу.", quick_replies=qr)
 
     except Exception as err:
         print(f"Webhook боловсруулахад алдаа: {err}")
