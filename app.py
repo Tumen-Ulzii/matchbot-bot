@@ -24,7 +24,56 @@ def send_message(recipient_id, text):
 @app.route("/", methods=["GET"])
 def home():
     """Сервер ажиллаж байгааг шалгах үндсэн хуудас"""
-    return "MatchChat Server is running 24/7!", 200
+    return "MatchChat Server is running 24/7!CAMILAAXISMUS", 800
+    @app.route("/privacy", methods=["GET"])
+def privacy_policy():
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="mn">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>MatchChat - Нууцлалын бодлого ба Үйлчилгээний нөхцөл</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: auto; color: #333; }
+            h1 { color: #0d1b2a; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; }
+            h2 { color: #1b263b; margin-top: 25px; }
+            p, li { font-size: 15px; }
+            .badge { background: #e0e1dd; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        </style>
+    </head>
+    <body>
+        <h1>MatchChat - Үйлчилгээний нөхцөл ба Нууцлалын бодлого</h1>
+        <p><span class="badge">Сүүлд шинэчлэгдсэн: 2026 он</span></p>
+
+        <h2>1. Үйлчилгээний зорилго</h2>
+        <p>MatchChat нь Facebook Messenger ашиглан хэрэглэгчдийг бодит цаг хугацаанд, нэргүйгээр хооронд нь холбож чатлуулах зорилготой платформ юм.</p>
+
+        <h2>2. Мэдээллийн нууцлал ба цуглуулалт</h2>
+        <ul>
+            <li>Бид хэрэглэгчийн Facebook профайлын нэр, зураг, хувийн мэдээллийг ярилцагч талд ХЭЗЭЭ Ч харуулахгүй ба бүрэн нууцална.</li>
+            <li>Чатлаж буй хоёр талын холболтыг зөвхөн хэрэглэгчийн түр үүссэн Page-Scoped ID (PSID) ашиглан хийнэ.</li>
+            <li>Үйлчилгээний аюулгүй байдал, спам болон зүй бус үйлдлээс сэргийлэх зорилгоор чатын түүхийг дотоод системд түр хугацаанд хадгалж болно.</li>
+        </ul>
+
+        <h2>3. Хэрэглэгчийн баримтлах дүрэм (Community Guidelines)</h2>
+        <p>MatchChat-ийг ашиглахдаа дараах үйлдлүүдийг хатуу хориглоно:</p>
+        <ul>
+            <li>Бусдыг доромжлох, заналхийлэх, ялгаварлан гадуурхсан үг хэллэг ашиглах;</li>
+            <li>Садар самуун, хүчирхийлэл сурталчилсан агуулгатай бичвэр, линк илгээх;</li>
+            <li>Бусдаас мөнгө, дансны мэдээлэл, нууц үг нэхэх зэрэг залилангийн шинж чанартай үйлдэл гаргах;</li>
+            <li>Зөвшөөрөлгүй зар сурталчилгаа (spam) тасралтгүй илгээх.</li>
+        </ul>
+
+        <h2>4. Дүрмийн хариуцлага</h2>
+        <p>Дээрх дүрмийг зөрчсөн хэрэглэгчийг урьдчилан сануулахгүйгээр ботоос бүрмөсөн хасах (хязгаарлах) эрхийг администратор эдэлнэ.</p>
+
+        <h2>5. Холбоо барих</h2>
+        <p>Хэрэв танд ямар нэг гомдол, санал байвал манай албан ёсны Facebook хуудсаар дамжуулан холбогдоно уу.</p>
+    </body>
+    </html>
+    """
+    return html_content, 200
 
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
