@@ -32,18 +32,26 @@ def init_db():
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:
-            # Хэрэглэгчдийн хүснэгт
+            # Хэрэглэгчдийн хүснэгт үүсгэх
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     psid VARCHAR(100) PRIMARY KEY,
                     nickname VARCHAR(100),
-                    gender VARCHAR(20) DEFAULT 'Тодорхойгүй',
-                    age VARCHAR(10) DEFAULT 'Тодорхойгүй',
+                    gender VARCHAR(50) DEFAULT 'Тодорхойгүй',
+                    age VARCHAR(50) DEFAULT 'Тодорхойгүй',
                     partner_id VARCHAR(100),
                     is_waiting BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            
+            # StringDataRightTruncation алдааг арилгах тэлэлтүүд
+            cur.execute("ALTER TABLE users ALTER COLUMN age TYPE VARCHAR(50);")
+            cur.execute("ALTER TABLE users ALTER COLUMN gender TYPE VARCHAR(50);")
+            cur.execute("ALTER TABLE users ALTER COLUMN age SET DEFAULT 'Тодорхойгүй';")
+            cur.execute("ALTER TABLE users ALTER COLUMN gender SET DEFAULT 'Тодорхойгүй';")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
             # Persona ID-нуудыг хадгалах хүснэгт
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS personas (
@@ -152,15 +160,12 @@ def get_statistics():
             "today": 0, "male": 0, "female": 0, "unknown_gender": 0
         }
     with conn.cursor() as cur:
-        # Нийт хэрэглэгч
         cur.execute("SELECT COUNT(*) FROM users;")
         total = cur.fetchone()[0]
 
-        # Өнөөдөр бүртгүүлсэн хэрэглэгчид
         cur.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE;")
         today = cur.fetchone()[0]
 
-        # Хүйсний харьцаа
         cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эрэгтэй';")
         male = cur.fetchone()[0]
 
@@ -170,11 +175,9 @@ def get_statistics():
         cur.execute("SELECT COUNT(*) FROM users WHERE gender NOT IN ('Эрэгтэй', 'Эмэгтэй');")
         unknown_gender = cur.fetchone()[0]
 
-        # Одоо чаталж буй
         cur.execute("SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL;")
         chatting = cur.fetchone()[0]
 
-        # Хүлээж буй
         cur.execute("SELECT COUNT(*) FROM users WHERE is_waiting = TRUE;")
         waiting = cur.fetchone()[0]
 
@@ -328,9 +331,11 @@ def verify_webhook():
 
 @app.route("/webhook", methods=["POST"])
 def handle_messages():
-    data = request.get_json()
+    try:
+        data = request.get_json(silent=True, force=True)
+        if not data or data.get("object") != "page":
+            return "EVENT_RECEIVED", 200
 
-    if data.get("object") == "page":
         for entry in data.get("entry", []):
             for messaging_event in entry.get("messaging", []):
                 sender_id = messaging_event.get("sender", {}).get("id")
@@ -411,13 +416,13 @@ def handle_messages():
                 # 2. ЧАТААС ГАРАХ
                 elif clean_text in ["гарах", "stop", "exit", "гар"]:
                     u = get_or_create_user(sender_id)
-                    if u["partner_id"]:
+                    if u and u.get("partner_id"):
                         partner_id = u["partner_id"]
                         update_user_field(sender_id, "partner_id", None)
                         update_user_field(partner_id, "partner_id", None)
                         send_message(sender_id, "❌ Та чатаас гарлаа. Шинэ хүнтэй холбогдох бол 'Холбогдох' гэж бичнэ үү.")
                         send_message(partner_id, "❌ Ярилцагч тань чатаас гарлаа. Шинэ хүнтэй холбогдох бол 'Холбогдох' гэж бичнэ үү.")
-                    elif u["is_waiting"]:
+                    elif u and u.get("is_waiting"):
                         update_user_field(sender_id, "is_waiting", False)
                         send_message(sender_id, "Хайлтыг зогсоолоо. 'Холбогдох' гэж бичээд дахин эхлүүлэх боломжтой.")
                     else:
@@ -426,9 +431,9 @@ def handle_messages():
                 # 3. ХОЛБОГДОХ
                 elif clean_text in ["холбогдох", "хайх", "start", "эхлэх"]:
                     u = get_or_create_user(sender_id)
-                    if u["partner_id"]:
+                    if u and u.get("partner_id"):
                         send_message(sender_id, "Та хэдийн нэг хүнтэй холбогдсон байна. Чатаас гарах бол 'Гарах' гэж бичнэ үү.")
-                    elif u["is_waiting"]:
+                    elif u and u.get("is_waiting"):
                         send_message(sender_id, "Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
                     else:
                         conn = get_db_connection()
@@ -457,12 +462,14 @@ def handle_messages():
                 # 4. ЧАТЛАХ (PERSONA АШИГЛАН ДАМЖУУЛАХ)
                 else:
                     u = get_or_create_user(sender_id)
-                    if u["partner_id"]:
+                    if u and u.get("partner_id"):
                         p_id = get_persona_id(u["gender"])
                         formatted_text = f"[{u['nickname']}]: {text}"
                         send_message(u["partner_id"], formatted_text, persona_id=p_id)
                     else:
                         send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна. 'Холбогдох' гэж бичнэ үү.\nПрофайлаа харах бол '/профайл' гэж бичээрэй.")
+    except Exception as err:
+        print(f"Webhook боловсруулахад алдаа: {err}")
 
     return "EVENT_RECEIVED", 200
 
