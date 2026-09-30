@@ -59,14 +59,21 @@ init_db()
 # --- PERSONA API УДИРДЛАГА ---
 
 def create_persona(name, profile_picture_url):
+    """Facebook дээр шинэ Persona үүсгэх хүсэлт (Хамгаалалттай)"""
+    if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
+        return None
+    
     url = f"https://graph.facebook.com/v19.0/me/personas?access_token={PAGE_ACCESS_TOKEN}"
     payload = {
         "name": name,
         "profile_picture_url": profile_picture_url
     }
-    res = requests.post(url, json=payload)
-    if res.status_code == 200:
-        return res.json().get("id")
+    try:
+        res = requests.post(url, json=payload, timeout=5)
+        if res.status_code == 200:
+            return res.json().get("id")
+    except Exception as e:
+        print(f"Persona үүсгэхэд алдаа гарлаа: {e}")
     return None
 
 def get_persona_id(gender):
@@ -182,9 +189,13 @@ def get_statistics():
         "waiting": waiting
     }
 
-# --- МЕССЕЖ ИЛГЭЭХ СИСТЕМ ---
+# --- МЕССЕЖ ИЛГЭЭХ СИСТЕМ (ХАМГААЛАЛТТАЙ) ---
 
 def send_message(recipient_id, text, persona_id=None):
+    if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
+        print(f"[TEST / NO TOKEN] To={recipient_id} | Text={text} | Persona={persona_id}")
+        return
+
     url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     payload = {
         "recipient": {"id": recipient_id},
@@ -193,7 +204,12 @@ def send_message(recipient_id, text, persona_id=None):
     if persona_id:
         payload["persona_id"] = persona_id
         
-    requests.post(url, json=payload)
+    try:
+        res = requests.post(url, json=payload, timeout=5)
+        if res.status_code != 200:
+            print(f"Facebook API алдаа: {res.status_code} - {res.text}")
+    except Exception as e:
+        print(f"Facebook API илгээхэд сүлжээний алдаа: {e}")
 
 # --- ROUTES ---
 
@@ -335,7 +351,7 @@ def handle_messages():
 
                 clean_text = text.lower()
 
-                # ШИНЭЧЛЭГДСЭН АДМИН СТАТИСТИК КОМАНД
+                # АДМИН СТАТИСТИК КОМАНД
                 if text == ADMIN_SECRET:
                     st = get_statistics()
                     msg = (
