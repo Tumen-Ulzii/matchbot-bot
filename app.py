@@ -59,7 +59,6 @@ init_db()
 # --- PERSONA API УДИРДЛАГА ---
 
 def create_persona(name, profile_picture_url):
-    """Facebook дээр шинэ Persona үүсгэх хүсэлт"""
     url = f"https://graph.facebook.com/v19.0/me/personas?access_token={PAGE_ACCESS_TOKEN}"
     payload = {
         "name": name,
@@ -71,7 +70,6 @@ def create_persona(name, profile_picture_url):
     return None
 
 def get_persona_id(gender):
-    """Баазаас Persona ID-г авах, байхгүй бол Facebook дээр үүсгэж хадгалах"""
     conn = get_db_connection()
     if not conn:
         return None
@@ -142,16 +140,47 @@ def update_user_field(psid, field, value):
 def get_statistics():
     conn = get_db_connection()
     if not conn:
-        return {"total": 0, "chatting": 0, "waiting": 0}
+        return {
+            "total": 0, "chatting": 0, "waiting": 0,
+            "today": 0, "male": 0, "female": 0, "unknown_gender": 0
+        }
     with conn.cursor() as cur:
+        # Нийт хэрэглэгч
         cur.execute("SELECT COUNT(*) FROM users;")
         total = cur.fetchone()[0]
+
+        # Өнөөдөр бүртгүүлсэн хэрэглэгчид
+        cur.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE;")
+        today = cur.fetchone()[0]
+
+        # Хүйсний харьцаа
+        cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эрэгтэй';")
+        male = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эмэгтэй';")
+        female = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM users WHERE gender NOT IN ('Эрэгтэй', 'Эмэгтэй');")
+        unknown_gender = cur.fetchone()[0]
+
+        # Одоо чаталж буй
         cur.execute("SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL;")
         chatting = cur.fetchone()[0]
+
+        # Хүлээж буй
         cur.execute("SELECT COUNT(*) FROM users WHERE is_waiting = TRUE;")
         waiting = cur.fetchone()[0]
+
     conn.close()
-    return {"total": total, "chatting": chatting, "waiting": waiting}
+    return {
+        "total": total,
+        "today": today,
+        "male": male,
+        "female": female,
+        "unknown_gender": unknown_gender,
+        "chatting": chatting,
+        "waiting": waiting
+    }
 
 # --- МЕССЕЖ ИЛГЭЭХ СИСТЕМ ---
 
@@ -172,10 +201,10 @@ def send_message(recipient_id, text, persona_id=None):
 def home():
     return "MatchChat PostgreSQL & Persona Server is running 24/7! CAMILAAXISMUS", 200
 
-# ДАТА БОЛОН ТОО БАРИМТ ХАРАХ ХУУДАС
+# ДЭЛГЭРЭНГҮЙ СТАТИСТИК ХУУДАС
 @app.route("/stats", methods=["GET"])
 def stats_page():
-    stats = get_statistics()
+    st = get_statistics()
     return f"""
     <!DOCTYPE html>
     <html>
@@ -184,28 +213,31 @@ def stats_page():
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ font-family: sans-serif; background: #0f172a; color: #fff; padding: 40px 20px; }}
-            .container {{ max-width: 500px; margin: auto; background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }}
-            h2 {{ color: #38bdf8; text-align: center; margin-bottom: 25px; }}
-            .stat-box {{ display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #334155; font-size: 16px; }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b132b; color: #fff; padding: 40px 15px; margin: 0; }}
+            .container {{ max-width: 520px; margin: auto; background: #1c2541; padding: 25px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
+            h2 {{ color: #48cae4; text-align: center; margin-top: 0; margin-bottom: 20px; font-size: 22px; }}
+            .section-title {{ font-size: 13px; text-transform: uppercase; color: #8d99ae; margin-top: 20px; margin-bottom: 8px; font-weight: bold; letter-spacing: 0.5px; }}
+            .stat-box {{ display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #3a506b; font-size: 15px; }}
             .stat-val {{ font-weight: bold; color: #4ade80; }}
+            .stat-sub {{ color: #a5b4fc; font-weight: 600; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h2>📊 MatchChat Хяналтын Самбар</h2>
-            <div class="stat-box">
-                <span>Нийт бүртгэлтэй хэрэглэгч:</span>
-                <span class="stat-val">{stats['total']} хүн</span>
-            </div>
-            <div class="stat-box">
-                <span>Одоо чаталж буй:</span>
-                <span class="stat-val">{stats['chatting']} хүн ({stats['chatting'] // 2} хос)</span>
-            </div>
-            <div class="stat-box">
-                <span>Ярилцагч хайж буй:</span>
-                <span class="stat-val">{stats['waiting']} хүн</span>
-            </div>
+            
+            <div class="section-title">Хэрэглэгчийн тоо баримт</div>
+            <div class="stat-box"><span>Нийт хэрэглэгч:</span><span class="stat-val">{st['total']} хүн</span></div>
+            <div class="stat-box"><span>Өнөөдөр шинээр нэмэгдсэн:</span><span class="stat-val">+{st['today']} хүн</span></div>
+
+            <div class="section-title">Хүйсний бүтэц</div>
+            <div class="stat-box"><span>Эрэгтэй:</span><span class="stat-sub">{st['male']} хүн</span></div>
+            <div class="stat-box"><span>Эмэгтэй:</span><span class="stat-sub">{st['female']} хүн</span></div>
+            <div class="stat-box"><span>Тохируулаагүй:</span><span class="stat-sub">{st['unknown_gender']} хүн</span></div>
+
+            <div class="section-title">Бодит цагийн идэвх</div>
+            <div class="stat-box"><span>Одоо чаталж буй:</span><span class="stat-val">{st['chatting']} хүн ({st['chatting'] // 2} хос)</span></div>
+            <div class="stat-box"><span>Хайж буй (хүлээгдэж буй):</span><span class="stat-val">{st['waiting']} хүн</span></div>
         </div>
     </body>
     </html>
@@ -293,7 +325,6 @@ def handle_messages():
 
                 user = get_or_create_user(sender_id)
 
-                # Зураг, файл илгээхийг хориглох
                 if "attachments" in message:
                     send_message(sender_id, "⚠️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө.")
                     continue
@@ -304,13 +335,15 @@ def handle_messages():
 
                 clean_text = text.lower()
 
-                # Админ статистик харах
+                # ШИНЭЧЛЭГДСЭН АДМИН СТАТИСТИК КОМАНД
                 if text == ADMIN_SECRET:
                     st = get_statistics()
                     msg = (
-                        f"📊 Системийн дата мэдээлэл:\n\n"
+                        f"📊 Системийн дэлгэрэнгүй тоо:\n\n"
                         f"👥 Нийт хэрэглэгч: {st['total']}\n"
-                        f"💬 Одоо чаталж буй: {st['chatting']} ({st['chatting']//2} хос)\n"
+                        f"✨ Өнөөдөр шинээр: +{st['today']}\n"
+                        f"👨 Эрэгтэй: {st['male']} | 👩 Эмэгтэй: {st['female']}\n"
+                        f"💬 Чаталж буй: {st['chatting']} ({st['chatting']//2} хос)\n"
                         f"⏳ Хүлээж буй: {st['waiting']}"
                     )
                     send_message(sender_id, msg)
