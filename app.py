@@ -26,7 +26,6 @@ def home():
     """Сервер ажиллаж байгааг шалгах үндсэн хуудас"""
     return "MatchChat Server is running 24/7!CAMILAAXISMUS", 200
 
-
 @app.route("/privacy", methods=["GET"])
 def privacy_policy():
     html_content = """
