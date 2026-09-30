@@ -13,12 +13,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 ADMIN_SECRET = "/admin stat"
 
-# Аватарын зургийн бэлэн найдвартай линкүүд
-AVATAR_BOT = "https://cdn-icons-png.flaticon.com/512/4712/4712038.png"
-AVATAR_MALE = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
-AVATAR_FEMALE = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
-AVATAR_UNKNOWN = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
-
 # --- ӨГӨГДЛИЙН САНГИЙН ТОХИРГОО ---
 
 def get_db_connection():
@@ -146,7 +140,7 @@ def get_statistics():
         "age_26_30": age_26_30, "age_30_plus": age_30_plus, "age_unknown": age_unknown
     }
 
-# --- МЕССЕЖ БОЛОН ЗУРАГ ИЛГЭЭХ ҮНДСЭН ФУНКЦҮҮД ---
+# --- МЕССЕЖ ИЛГЭЭХ ҮНДСЭН СИСТЕМ ---
 
 def send_message(recipient_id, text, quick_replies=None):
     if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
@@ -162,29 +156,11 @@ def send_message(recipient_id, text, quick_replies=None):
         payload["message"]["quick_replies"] = quick_replies
         
     try:
-        res = requests.post(url, json=payload, timeout=8)
+        res = requests.post(url, json=payload, timeout=5)
         if res.status_code != 200:
             print(f"Facebook API алдаа: {res.status_code} - {res.text}")
     except Exception as e:
-        print(f"Facebook API илгээхэд сүлжээний алдаа: {e}")
-
-def send_image(recipient_id, image_url):
-    if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
-        return
-    url = f"https://graph.facebook.com/v19.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-    payload = {
-        "recipient": {"id": recipient_id},
-        "message": {
-            "attachment": {
-                "type": "image",
-                "payload": {"url": image_url, "is_reusable": True}
-            }
-        }
-    }
-    try:
-        requests.post(url, json=payload, timeout=8)
-    except Exception as e:
-        print(f"Зураг илгээхэд алдаа гарлаа: {e}")
+        print(f"Facebook API сүлжээний алдаа: {e}")
 
 # Алхамт бүртгэлийн Quick Replies
 def ask_gender(psid):
@@ -193,8 +169,7 @@ def ask_gender(psid):
         {"content_type": "text", "title": "👨 Эрэгтэй", "payload": "GENDER_MALE"},
         {"content_type": "text", "title": "👩 Эмэгтэй", "payload": "GENDER_FEMALE"}
     ]
-    send_image(psid, AVATAR_BOT)
-    send_message(psid, "👋 [MatchBot • Систем]\n\nMatchChat-д тавтай морил!\nЭхлээд өөрийн хүйсээ сонгоно уу:", quick_replies=qr)
+    send_message(psid, "👋 MatchChat-д тавтай морил!\n\nЭхлээд өөрийн хүйсээ сонгоно уу:", quick_replies=qr)
 
 def ask_age(psid):
     update_user_field(psid, "step", "ASK_AGE")
@@ -240,7 +215,7 @@ def ask_exit_confirmation(sender_id):
         {"content_type": "text", "title": "✅ Тийм, гарах", "payload": "EXIT_CONFIRMED_YES"},
         {"content_type": "text", "title": "❌ Үгүй, үргэлжлүүлэх", "payload": "EXIT_CONFIRMED_NO"}
     ]
-    send_message(sender_id, "⚠️ Та одоогийн чатыг дуусгаж гарахдаа итгэлтэй байна уу?", quick_replies=qr)
+    send_message(sender_id, "⚠️ Та одоогийн яриаг дуусгаж чатнаас гарахдаа итгэлтэй байна уу?", quick_replies=qr)
 
 # Холболт эхлүүлэх
 def handle_start_matching(sender_id):
@@ -292,15 +267,7 @@ def handle_start_matching(sender_id):
             f"(Чатаас гарах бол цэснээс эсвэл 'Гарах' гэж бичнэ үү)"
         )
 
-        p_avatar = AVATAR_FEMALE if waiting_partner.get('gender') == 'Эмэгтэй' else (AVATAR_MALE if waiting_partner.get('gender') == 'Эрэгтэй' else AVATAR_UNKNOWN)
-        s_avatar = AVATAR_FEMALE if u.get('gender') == 'Эмэгтэй' else (AVATAR_MALE if u.get('gender') == 'Эрэгтэй' else AVATAR_UNKNOWN)
-
-        # Sender рүү нөгөө хүний зураг, мэдээллийг явуулах
-        send_image(sender_id, p_avatar)
         send_message(sender_id, p_info)
-
-        # Partner рүү энэ хүний зураг, мэдээллийг явуулах
-        send_image(partner_id, s_avatar)
         send_message(partner_id, s_info)
     else:
         send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц шууд холбоно.")
@@ -345,7 +312,7 @@ def handle_show_profile(sender_id):
 
 @app.route("/", methods=["GET"])
 def home():
-    return "MatchChat PostgreSQL & Webhook Server is running 24/7! CAMILAAXISMUS", 200
+    return "MatchChat Server is running 24/7! CAMILAAXISMUS", 200
 
 # ЦЭС БОЛОН GET STARTED-ИЙГ БАТАЛГААТАЙ СУУЛГАХ ТУСГАЙ ХУУДАС
 @app.route("/setup-menu", methods=["GET"])
@@ -545,7 +512,7 @@ def handle_messages():
 
                 # Зураг, файл, стикер хориглох
                 if "attachments" in message or "sticker_id" in message:
-                    send_message(sender_id, "⚠️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө. Зураг, стикер дамжуулахгүй.")
+                    send_message(sender_id, "⚠️️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө. Зураг, стикер дамжуулахгүй.")
                     continue
 
                 text = message.get("text", "").strip()
@@ -635,12 +602,12 @@ def handle_messages():
                     ask_gender(sender_id)
                     continue
 
-                # ЧАТЛАХ (ID, НЭР, НАС, ХҮЙСИЙГ ТОД ГАРЧИГТАЙГААР ДАМЖУУЛАХ)
+                # ЧАТЛАХ (ID, НЭР, НАС, ХҮЙСИЙГ МЕССЕЖИЙН ТОЛГОЙД ЦЭВЭРХЭН ДАМЖУУЛАХ)
                 u = get_or_create_user(sender_id)
                 if u and u.get("partner_id"):
                     user_id = str(u['psid'])[-4:]
                     gender_icon = "👨" if u.get("gender") == "Эрэгтэй" else ("👩" if u.get("gender") == "Эмэгтэй" else "👤")
-                    formatted_text = f"[{gender_icon} #{user_id} • {u['nickname']} • {u['age']} • {u['gender']}]:\n{text}"
+                    formatted_text = f"[{gender_icon} #{user_id} | {u['nickname']} | {u['age']} | {u['gender']}]:\n{text}"
                     send_message(u["partner_id"], formatted_text)
                 else:
                     qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
