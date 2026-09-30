@@ -45,7 +45,7 @@ def init_db():
                 );
             """)
             
-            # StringDataRightTruncation алдааг арилгах тэлэлтүүд
+            # Баганын тэлэлт болон шалгалтууд
             cur.execute("ALTER TABLE users ALTER COLUMN age TYPE VARCHAR(50);")
             cur.execute("ALTER TABLE users ALTER COLUMN gender TYPE VARCHAR(50);")
             cur.execute("ALTER TABLE users ALTER COLUMN age SET DEFAULT 'Тодорхойгүй';")
@@ -122,7 +122,7 @@ def get_persona_id(gender):
     conn.close()
     return None
 
-# --- ХЭРЭГЛЭГЧИЙН УДИРДЛАГА ---
+# --- ХЭРЭГЛЭГЧИЙН УДИРДЛАГА БОЛОН СТАТИСТИК ---
 
 def get_or_create_user(psid):
     conn = get_db_connection()
@@ -156,16 +156,21 @@ def get_statistics():
     conn = get_db_connection()
     if not conn:
         return {
-            "total": 0, "chatting": 0, "waiting": 0,
-            "today": 0, "male": 0, "female": 0, "unknown_gender": 0
+            "total": 0, "today": 0, "chatting": 0, "waiting": 0,
+            "male": 0, "female": 0, "unknown_gender": 0,
+            "avg_age": "—", "age_16_20": 0, "age_21_25": 0,
+            "age_26_30": 0, "age_30_plus": 0, "age_unknown": 0
         }
     with conn.cursor() as cur:
+        # Нийт хэрэглэгч
         cur.execute("SELECT COUNT(*) FROM users;")
         total = cur.fetchone()[0]
 
+        # Өнөөдрийн бүртгэл
         cur.execute("SELECT COUNT(*) FROM users WHERE DATE(created_at) = CURRENT_DATE;")
         today = cur.fetchone()[0]
 
+        # Хүйс
         cur.execute("SELECT COUNT(*) FROM users WHERE gender = 'Эрэгтэй';")
         male = cur.fetchone()[0]
 
@@ -175,11 +180,31 @@ def get_statistics():
         cur.execute("SELECT COUNT(*) FROM users WHERE gender NOT IN ('Эрэгтэй', 'Эмэгтэй');")
         unknown_gender = cur.fetchone()[0]
 
+        # Бодит цагийн идэвх
         cur.execute("SELECT COUNT(*) FROM users WHERE partner_id IS NOT NULL;")
         chatting = cur.fetchone()[0]
 
         cur.execute("SELECT COUNT(*) FROM users WHERE is_waiting = TRUE;")
         waiting = cur.fetchone()[0]
+
+        # Насны бүлгүүд болон дундаж нас
+        cur.execute("""
+            SELECT 
+                ROUND(AVG(CASE WHEN age ~ '^[0-9]+$' THEN age::numeric END), 1) as avg_age,
+                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 16 AND 20) as age_16_20,
+                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 21 AND 25) as age_21_25,
+                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int BETWEEN 26 AND 30) as age_26_30,
+                COUNT(*) FILTER (WHERE age ~ '^[0-9]+$' AND age::int > 30) as age_30_plus,
+                COUNT(*) FILTER (WHERE NOT (age ~ '^[0-9]+$')) as age_unknown
+            FROM users;
+        """)
+        age_row = cur.fetchone()
+        avg_age = age_row[0] if age_row[0] is not None else "—"
+        age_16_20 = age_row[1]
+        age_21_25 = age_row[2]
+        age_26_30 = age_row[3]
+        age_30_plus = age_row[4]
+        age_unknown = age_row[5]
 
     conn.close()
     return {
@@ -189,7 +214,13 @@ def get_statistics():
         "female": female,
         "unknown_gender": unknown_gender,
         "chatting": chatting,
-        "waiting": waiting
+        "waiting": waiting,
+        "avg_age": avg_age,
+        "age_16_20": age_16_20,
+        "age_21_25": age_21_25,
+        "age_26_30": age_26_30,
+        "age_30_plus": age_30_plus,
+        "age_unknown": age_unknown
     }
 
 # --- МЕССЕЖ ИЛГЭЭХ СИСТЕМ (ХАМГААЛАЛТТАЙ) ---
@@ -235,10 +266,11 @@ def stats_page():
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b132b; color: #fff; padding: 40px 15px; margin: 0; }}
             .container {{ max-width: 520px; margin: auto; background: #1c2541; padding: 25px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
             h2 {{ color: #48cae4; text-align: center; margin-top: 0; margin-bottom: 20px; font-size: 22px; }}
-            .section-title {{ font-size: 13px; text-transform: uppercase; color: #8d99ae; margin-top: 20px; margin-bottom: 8px; font-weight: bold; letter-spacing: 0.5px; }}
-            .stat-box {{ display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #3a506b; font-size: 15px; }}
+            .section-title {{ font-size: 13px; text-transform: uppercase; color: #8d99ae; margin-top: 22px; margin-bottom: 8px; font-weight: bold; letter-spacing: 0.5px; }}
+            .stat-box {{ display: flex; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid #3a506b; font-size: 15px; }}
             .stat-val {{ font-weight: bold; color: #4ade80; }}
             .stat-sub {{ color: #a5b4fc; font-weight: 600; }}
+            .stat-age {{ color: #fbbf24; font-weight: 600; }}
         </style>
     </head>
     <body>
@@ -247,12 +279,20 @@ def stats_page():
             
             <div class="section-title">Хэрэглэгчийн тоо баримт</div>
             <div class="stat-box"><span>Нийт хэрэглэгч:</span><span class="stat-val">{st['total']} хүн</span></div>
-            <div class="stat-box"><span>Өнөөдөр шинээр нэмэгдсэн:</span><span class="stat-val">+{st['today']} хүн</span></div>
+            <div class="stat-box"><span>Өнөөдөр шинээр:</span><span class="stat-val">+{st['today']} хүн</span></div>
 
             <div class="section-title">Хүйсний бүтэц</div>
             <div class="stat-box"><span>Эрэгтэй:</span><span class="stat-sub">{st['male']} хүн</span></div>
             <div class="stat-box"><span>Эмэгтэй:</span><span class="stat-sub">{st['female']} хүн</span></div>
             <div class="stat-box"><span>Тохируулаагүй:</span><span class="stat-sub">{st['unknown_gender']} хүн</span></div>
+
+            <div class="section-title">Насны ангилал & Дундаж</div>
+            <div class="stat-box"><span>Насны дундаж:</span><span class="stat-val">{st['avg_age']} нас</span></div>
+            <div class="stat-box"><span>16 - 20 нас:</span><span class="stat-age">{st['age_16_20']} хүн</span></div>
+            <div class="stat-box"><span>21 - 25 нас:</span><span class="stat-age">{st['age_21_25']} хүн</span></div>
+            <div class="stat-box"><span>26 - 30 нас:</span><span class="stat-age">{st['age_26_30']} хүн</span></div>
+            <div class="stat-box"><span>31+ нас:</span><span class="stat-age">{st['age_30_plus']} хүн</span></div>
+            <div class="stat-box"><span>Насаа оруулаагүй:</span><span class="stat-sub">{st['age_unknown']} хүн</span></div>
 
             <div class="section-title">Бодит цагийн идэвх</div>
             <div class="stat-box"><span>Одоо чаталж буй:</span><span class="stat-val">{st['chatting']} хүн ({st['chatting'] // 2} хос)</span></div>
@@ -363,7 +403,12 @@ def handle_messages():
                         f"📊 Системийн дэлгэрэнгүй тоо:\n\n"
                         f"👥 Нийт хэрэглэгч: {st['total']}\n"
                         f"✨ Өнөөдөр шинээр: +{st['today']}\n"
-                        f"👨 Эрэгтэй: {st['male']} | 👩 Эмэгтэй: {st['female']}\n"
+                        f"👨 Эрэгтэй: {st['male']} | 👩 Эмэгтэй: {st['female']}\n\n"
+                        f"🎂 Насны бүтэц (Дундаж: {st['avg_age']}):\n"
+                        f"• 16-20: {st['age_16_20']} хүн\n"
+                        f"• 21-25: {st['age_21_25']} хүн\n"
+                        f"• 26-30: {st['age_26_30']} хүн\n"
+                        f"• 31+: {st['age_30_plus']} хүн\n\n"
                         f"💬 Чаталж буй: {st['chatting']} ({st['chatting']//2} хос)\n"
                         f"⏳ Хүлээж буй: {st['waiting']}"
                     )
