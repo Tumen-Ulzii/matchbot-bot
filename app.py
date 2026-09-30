@@ -14,6 +14,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 ADMIN_SECRET = "/admin stat"
 
 # Аватарын зургийн бэлэн линкүүд
+AVATAR_BOT = "https://cdn-icons-png.flaticon.com/512/4712/4712038.png"
 AVATAR_MALE = "https://cdn-icons-png.flaticon.com/512/4140/4140048.png"
 AVATAR_FEMALE = "https://cdn-icons-png.flaticon.com/512/4140/4140047.png"
 AVATAR_UNKNOWN = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
@@ -94,7 +95,11 @@ def get_persona_id(gender):
     p_name = "Нууц ярилцагч"
     p_pic = AVATAR_UNKNOWN
 
-    if gender == "Эрэгтэй":
+    if gender == "bot":
+        g_key = "bot"
+        p_name = "MatchChat Админ"
+        p_pic = AVATAR_BOT
+    elif gender == "Эрэгтэй":
         g_key = "male"
         p_name = "Залуу"
         p_pic = AVATAR_MALE
@@ -122,6 +127,51 @@ def get_persona_id(gender):
 
     conn.close()
     return None
+
+# --- FACEBOOK PROFILE (GET STARTED & PERSISTENT MENU) ТОХИРУУЛАХ ---
+
+def setup_messenger_profile():
+    if not PAGE_ACCESS_TOKEN or PAGE_ACCESS_TOKEN == "REPLACE_WITH_PAGE_TOKEN":
+        return
+    url = f"https://graph.facebook.com/v19.0/me/messenger_profile?access_token={PAGE_ACCESS_TOKEN}"
+    payload = {
+        "get_started": {"payload": "GET_STARTED"},
+        "greeting": [
+            {
+                "locale": "default",
+                "text": "MatchChat-д тавтай морилно уу! Танихгүй хүнтэй холбогдон нэргүйгээр чатлаарай."
+            }
+        ],
+        "persistent_menu": [
+            {
+                "locale": "default",
+                "composer_input_disabled": False,
+                "call_to_actions": [
+                    {
+                        "type": "postback",
+                        "title": "🚀 Холбогдох",
+                        "payload": "CMD_START"
+                    },
+                    {
+                        "type": "postback",
+                        "title": "❌ Чатаас гарах",
+                        "payload": "CMD_CONFIRM_EXIT"
+                    },
+                    {
+                        "type": "postback",
+                        "title": "📋 Профайл",
+                        "payload": "CMD_PROFILE"
+                    }
+                ]
+            }
+        ]
+    }
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Messenger profile тохируулахад алдаа: {e}")
+
+setup_messenger_profile()
 
 # --- ХЭРЭГЛЭГЧИЙН УДИРДЛАГА БОЛОН СТАТИСТИК ---
 
@@ -241,7 +291,8 @@ def ask_gender(psid):
         {"content_type": "text", "title": "👨 Эрэгтэй", "payload": "GENDER_MALE"},
         {"content_type": "text", "title": "👩 Эмэгтэй", "payload": "GENDER_FEMALE"}
     ]
-    send_message(psid, "👋 MatchChat-д тавтай морил!\n\nЭхлээд өөрийн хүйсээ сонгоно уу:", quick_replies=qr)
+    bot_persona = get_persona_id("bot")
+    send_message(psid, "👋 MatchChat-д тавтай морил!\n\nЭхлээд өөрийн хүйсээ сонгоно уу:", quick_replies=qr, persona_id=bot_persona)
 
 def ask_age(psid):
     update_user_field(psid, "step", "ASK_AGE")
@@ -251,11 +302,13 @@ def ask_age(psid):
         {"content_type": "text", "title": "26-30", "payload": "AGE_26_30"},
         {"content_type": "text", "title": "31+", "payload": "AGE_30_PLUS"}
     ]
-    send_message(psid, "Баярлалаа! Одоо насны ангиллаа сонгоно уу:", quick_replies=qr)
+    bot_persona = get_persona_id("bot")
+    send_message(psid, "Баярлалаа! Одоо насны ангиллаа сонгоно уу:", quick_replies=qr, persona_id=bot_persona)
 
 def ask_nickname(psid):
     update_user_field(psid, "step", "ASK_NICKNAME")
-    send_message(psid, "Одоо чатад ашиглах нэрээ (хоч нэр) чөлөөтэй бичиж илгээнэ үү:")
+    bot_persona = get_persona_id("bot")
+    send_message(psid, "Одоо чатад ашиглах нэрээ (хоч нэр) чөлөөтэй бичиж илгээнэ үү:", persona_id=bot_persona)
 
 def show_main_menu(psid, user):
     update_user_field(psid, "step", "COMPLETED")
@@ -272,16 +325,35 @@ def show_main_menu(psid, user):
         f"• Нас: {user['age']}\n\n"
         f"Хүнтэй холбогдохын тулд доорх '🚀 Холбогдох' товчийг дарна уу."
     )
-    send_message(psid, text, quick_replies=qr)
+    bot_persona = get_persona_id("bot")
+    send_message(psid, text, quick_replies=qr, persona_id=bot_persona)
+
+# Гарахын өмнө лавлах баталгаажуулалт
+def ask_exit_confirmation(sender_id):
+    u = get_or_create_user(sender_id)
+    if not u.get("partner_id") and not u.get("is_waiting"):
+        qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
+        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr)
+        return
+
+    update_user_field(sender_id, "step", "CONFIRM_EXIT")
+    qr = [
+        {"content_type": "text", "title": "✅ Тийм, гарах", "payload": "EXIT_CONFIRMED_YES"},
+        {"content_type": "text", "title": "❌ Үгүй, үргэлжлүүлэх", "payload": "EXIT_CONFIRMED_NO"}
+    ]
+    bot_persona = get_persona_id("bot")
+    send_message(sender_id, "⚠️ Та одоогийн чатыг дуусгаж гарахдаа итгэлтэй байна уу?", quick_replies=qr, persona_id=bot_persona)
 
 # Холболт эхлүүлэх
 def handle_start_matching(sender_id):
     u = get_or_create_user(sender_id)
+    bot_persona = get_persona_id("bot")
+
     if u and u.get("partner_id"):
-        send_message(sender_id, "Та хэдийн нэг хүнтэй холбогдсон байна. Чатаас гарах бол цэснээс '❌ Чатаас гарах'-ыг сонгоно уу.")
+        send_message(sender_id, "Та хэдийн нэг хүнтэй холбогдсон байна. Чатаас гарах бол цэснээс '❌ Чатаас гарах'-ыг сонгоно уу.", persona_id=bot_persona)
         return
     if u and u.get("is_waiting"):
-        send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.")
+        send_message(sender_id, "🔍 Танд тохирох хүнийг хайж байна... Түр хүлээнэ үү.", persona_id=bot_persona)
         return
 
     conn = get_db_connection()
@@ -297,6 +369,8 @@ def handle_start_matching(sender_id):
         update_user_field(sender_id, "partner_id", partner_id)
         update_user_field(partner_id, "partner_id", sender_id)
         update_user_field(partner_id, "is_waiting", False)
+        update_user_field(sender_id, "step", "COMPLETED")
+        update_user_field(partner_id, "step", "COMPLETED")
 
         u_id = str(u['psid'])[-4:]
         w_id = str(waiting_partner['psid'])[-4:]
@@ -308,7 +382,7 @@ def handle_start_matching(sender_id):
             f"• Нэр: {waiting_partner['nickname']}\n"
             f"• Хүйс: {waiting_partner['gender']}\n"
             f"• Нас: {waiting_partner['age']}\n\n"
-            f"(Чатаас гарах бол 'Гарах' гэж бичнэ үү)"
+            f"(Чатаас гарах бол цэснээс 'Чатаас гарах'-ыг сонгоно уу)"
         )
         s_info = (
             f"🎉 Холбогдлоо!\n"
@@ -317,30 +391,37 @@ def handle_start_matching(sender_id):
             f"• Нэр: {u['nickname']}\n"
             f"• Хүйс: {u['gender']}\n"
             f"• Нас: {u['age']}\n\n"
-            f"(Чатаас гарах бол 'Гарах' гэж бичнэ үү)"
+            f"(Чатаас гарах бол цэснээс 'Чатаас гарах'-ыг сонгоно уу)"
         )
 
-        send_message(sender_id, p_info)
-        send_message(partner_id, s_info)
+        p_persona = get_persona_id(waiting_partner.get("gender"))
+        s_persona = get_persona_id(u.get("gender"))
+
+        send_message(sender_id, p_info, persona_id=p_persona)
+        send_message(partner_id, s_info, persona_id=s_persona)
     else:
         update_user_field(sender_id, "is_waiting", True)
-        send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц шууд холбоно.")
+        send_message(sender_id, "🔍 Хайж байна... Хүн олдмогц шууд холбоно.", persona_id=bot_persona)
 
-# Чатаас гарах
+# Чатаас бодитоор гарах
 def handle_exit_chat(sender_id):
     u = get_or_create_user(sender_id)
+    update_user_field(sender_id, "step", "COMPLETED")
     qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
+    bot_persona = get_persona_id("bot")
+
     if u and u.get("partner_id"):
         partner_id = u["partner_id"]
         update_user_field(sender_id, "partner_id", None)
         update_user_field(partner_id, "partner_id", None)
-        send_message(sender_id, "❌ Та чатаас гарлаа.", quick_replies=qr)
-        send_message(partner_id, "❌ Ярилцагч тань чатаас гарлаа.", quick_replies=qr)
+        update_user_field(partner_id, "step", "COMPLETED")
+        send_message(sender_id, "❌ Та чатнаас гарлаа.", quick_replies=qr, persona_id=bot_persona)
+        send_message(partner_id, "❌ Ярилцагч тань чатнаас гарлаа.", quick_replies=qr, persona_id=bot_persona)
     elif u and u.get("is_waiting"):
         update_user_field(sender_id, "is_waiting", False)
-        send_message(sender_id, "Хайлтыг зогсоолоо.", quick_replies=qr)
+        send_message(sender_id, "Хайлтыг зогсоолоо.", quick_replies=qr, persona_id=bot_persona)
     else:
-        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr)
+        send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна.", quick_replies=qr, persona_id=bot_persona)
 
 # Профайл харуулах
 def handle_show_profile(sender_id):
@@ -357,7 +438,8 @@ def handle_show_profile(sender_id):
         f"• Хүйс: {u['gender']}\n"
         f"• Нас: {u['age']}"
     )
-    send_message(sender_id, profile_info, quick_replies=qr)
+    bot_persona = get_persona_id("bot")
+    send_message(sender_id, profile_info, quick_replies=qr, persona_id=bot_persona)
 
 # --- ROUTES ---
 
@@ -508,8 +590,8 @@ def handle_messages():
                             ask_gender(sender_id)
                         else:
                             handle_start_matching(sender_id)
-                    elif payload == "CMD_EXIT":
-                        handle_exit_chat(sender_id)
+                    elif payload in ["CMD_CONFIRM_EXIT", "CMD_EXIT"]:
+                        ask_exit_confirmation(sender_id)
                     elif payload == "CMD_PROFILE":
                         handle_show_profile(sender_id)
                     continue
@@ -520,7 +602,8 @@ def handle_messages():
                     continue
 
                 if "attachments" in message:
-                    send_message(sender_id, "⚠️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө.")
+                    bot_persona = get_persona_id("bot")
+                    send_message(sender_id, "⚠️ Аюулгүй байдлын үүднээс зөвхөн бичвэр (текст) илгээхийг зөвшөөрнө.", persona_id=bot_persona)
                     continue
 
                 text = message.get("text", "").strip()
@@ -543,7 +626,18 @@ def handle_messages():
                         f"💬 Чаталж буй: {st['chatting']} ({st['chatting']//2} хос)\n"
                         f"⏳ Хүлээж буй: {st['waiting']}"
                     )
-                    send_message(sender_id, msg)
+                    bot_persona = get_persona_id("bot")
+                    send_message(sender_id, msg, persona_id=bot_persona)
+                    continue
+
+                # Чатаас гарахын өмнөх баталгаажуулалтын хариу шалгах
+                if payload == "EXIT_CONFIRMED_YES":
+                    handle_exit_chat(sender_id)
+                    continue
+                elif payload == "EXIT_CONFIRMED_NO":
+                    update_user_field(sender_id, "step", "COMPLETED")
+                    bot_persona = get_persona_id("bot")
+                    send_message(sender_id, "Та яриагаа үргэлжлүүлж болно.", persona_id=bot_persona)
                     continue
 
                 # Хүйс сонгох үе шат
@@ -573,6 +667,16 @@ def handle_messages():
                     show_main_menu(sender_id, updated_user)
                     continue
 
+                # Текстээр гарахыг оролдох үед баталгаажуулалт асуух
+                if payload in ["CMD_EXIT", "CMD_CONFIRM_EXIT"] or clean_text in ["гарах", "stop", "exit", "гар"]:
+                    ask_exit_confirmation(sender_id)
+                    continue
+
+                # Хэрэв баталгаажуулах шатанд байхдаа товч биш текст бичвэл сануулах
+                if user.get("step") == "CONFIRM_EXIT":
+                    ask_exit_confirmation(sender_id)
+                    continue
+
                 # ХЭРЭВ БҮРТГЭЛ ДУУСААГҮЙ БАЙЖ ДУРЫН ЗҮЙЛ БИЧВЭЛ ШУУД ЭХНЭЭС НЬ ЭХЛҮҮЛЭХ
                 if user.get("step") != "COMPLETED":
                     ask_gender(sender_id)
@@ -581,10 +685,6 @@ def handle_messages():
                 # Түргэн коммандууд
                 if payload == "CMD_START" or clean_text in ["холбогдох", "хайх", "start", "эхлэх"]:
                     handle_start_matching(sender_id)
-                    continue
-
-                if payload == "CMD_EXIT" or clean_text in ["гарах", "stop", "exit", "гар"]:
-                    handle_exit_chat(sender_id)
                     continue
 
                 if payload == "CMD_PROFILE" or clean_text == "/профайл":
@@ -603,8 +703,9 @@ def handle_messages():
                     formatted_text = f"[#{user_id} | {u['nickname']} | {u['age']} | {u['gender']}]:\n{text}"
                     send_message(u["partner_id"], formatted_text, persona_id=p_id)
                 else:
+                    bot_persona = get_persona_id("bot")
                     qr = [{"content_type": "text", "title": "🚀 Холбогдох", "payload": "CMD_START"}]
-                    send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна. '🚀 Холбогдох' товчийг дарж хайна уу.", quick_replies=qr)
+                    send_message(sender_id, "Та одоогоор хэнтэй ч холбогдоогүй байна. '🚀 Холбогдох' товчийг дарж хайна уу.", quick_replies=qr, persona_id=bot_persona)
 
     except Exception as err:
         print(f"Webhook боловсруулахад алдаа: {err}")
